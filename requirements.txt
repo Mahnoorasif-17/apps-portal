@@ -1,7 +1,7 @@
 streamlit==1.43.2
 pandas
-openpyxl
-Pillow
+pillow
+openpyxl==3.1.5
 pdfplumber
 xlsxwriter
 requests
