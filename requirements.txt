@@ -1,0 +1,9 @@
+streamlit==1.43.2
+pandas==2.2.3
+openpyxl==3.1.5
+pillow==11.1.0
+pdfplumber
+xlsxwriter
+requests
+numpy
+pyarrow
