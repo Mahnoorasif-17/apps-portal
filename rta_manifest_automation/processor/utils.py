@@ -41,8 +41,15 @@ def get_footer_row(sheet):
 
 
 def format_header(sheet, header_row=7):
-    if sheet[f"A{header_row}"].value != "RegID":
-        raise ValidationError(f"Expected 'RegID' in cell A{header_row}")
+    # Find RegID column dynamically (don't assume it's in col A)
+    regid_col = None
+    for col in range(1, sheet.max_column + 1):
+        if str(sheet.cell(row=header_row, column=col).value).strip() == "RegID":
+            regid_col = col
+            break
+
+    if regid_col is None:
+        raise ValidationError(f"Expected 'RegID' in row {header_row}")
 
     sheet.freeze_panes = f"A{header_row + 1}"
 

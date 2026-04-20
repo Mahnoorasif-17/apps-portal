@@ -1,105 +1,116 @@
 import streamlit as st
 import pandas as pd
 import xml.etree.ElementTree as ET
-import tempfile
-
-EXPECTED_COLUMNS = [
-    "Name", "Identifier", "FirstName", "MiddleName", "LastName",
-    "PlanCost", "EmploymentStatus", "HireDate", "HiredOn",
-    "TerminationDate", "TerminatedOn", "StartDate",
-    "EnrolledOn", "EndDate", "EndedOn" , "CoverageLevel"
-]
+from io import BytesIO
 
 def show_xml_converter():
-    def xml_to_exact_excel(xml_file):
-        # Parse XML
-        context = ET.iterparse(xml_file, events=("start", "end"))
-        data_list = []
-        header_info = {}
+    st.header("📑 XML to Excel Converter")
+    st.write("Upload your Redirect Health XML file to convert it into a standardized Excel format.")
 
-        for event, elem in context:
-            if event == "end":
-                if elem.tag == "Header":
-                    header_info = {
-                        "Disclaimer": elem.findtext("Disclaimer", ""),
-                        "ExchangeName": elem.findtext("ExchangeName", ""),
-                        "VendorName": elem.findtext("VendorName", ""),
-                        "RunDate": elem.findtext("RunDate", ""),
-                    }
+    # --- 1. EXPECTED COLUMNS ---
+    EXPECTED_COLUMNS = [
+        "Name", "Identifier", "FirstName", "MiddleName", "LastName",
+        "PlanCost", "EmploymentStatus", "HireDate", "HiredOn",
+        "TerminationDate", "TerminatedOn", "StartDate",
+        "EnrolledOn", "EndDate", "EndedOn", "CoverageLevel",
+        "CarrierPlanCode", "PriorCoverageStartDate"
+    ]
 
-                elif elem.tag == "Company":
-                    company_data = {
-                        "Identifier": elem.findtext("Identifier", ""),
-                        "Name": elem.findtext("Name", ""),
-                    }
-                    full_data = {**header_info, **company_data}
-                    employees = elem.findall("Employees/Employee")
-                    first_employee = True
-                    
-                    for emp in employees:
-                        emp_data = {
-                            "FirstName": emp.findtext("FirstName", ""),
-                            "MiddleName": emp.findtext("MiddleName", ""),
-                            "LastName": emp.findtext("LastName", ""),
-                            "EmploymentStatus": emp.findtext("EmploymentStatus", ""),
-                            "HireDate": emp.findtext("HireDate", ""),
-                            "HiredOn": emp.findtext("HiredOn", ""),
-                            "TerminationDate": emp.findtext("TerminationDate", ""),
-                            "TerminatedOn": emp.findtext("TerminatedOn", ""),
-                        }
-                        
-                        enrollments = emp.findall("Enrollments/Enrollment")
-                        if enrollments:
-                            for enroll in enrollments:
-                                enroll_data = {
-                                    "PlanCost": enroll.findtext("PlanCost", ""),
-                                    "StartDate": enroll.findtext("StartDate", ""),
-                                    "EnrolledOn": enroll.findtext("EnrolledOn", ""),
-                                    "EndDate": enroll.findtext("EndDate", ""),
-                                    "EndedOn": enroll.findtext("EndedOn", ""),
-                                    "CoverageLevel": enroll.findtext("CoverageLevel", "")
+    # --- 2. FILE UPLOADER ---
+    uploaded_file = st.file_uploader("Choose an XML file", type="xml")
+
+    if uploaded_file is not None:
+        if st.button("Convert XML to Excel"):
+            try:
+                # Use iterparse on the uploaded file stream
+                context = ET.iterparse(uploaded_file, events=("start", "end"))
+                data_list = []
+                header_info = {}
+
+                for event, elem in context:
+                    if event == "end":
+                        if elem.tag == "Header":
+                            header_info = {
+                                "Disclaimer": elem.findtext("Disclaimer", ""),
+                                "ExchangeName": elem.findtext("ExchangeName", ""),
+                                "VendorName": elem.findtext("VendorName", ""),
+                                "RunDate": elem.findtext("RunDate", ""),
+                            }
+
+                        elif elem.tag == "Company":
+                            company_data = {
+                                "Identifier": elem.findtext("Identifier", ""),
+                                "Name": elem.findtext("Name", ""),
+                            }
+                            full_data = {**header_info, **company_data}
+                            employees = elem.findall("Employees/Employee")
+                            first_employee = True
+
+                            for emp in employees:
+                                emp_data = {
+                                    "FirstName": emp.findtext("FirstName", ""),
+                                    "MiddleName": emp.findtext("MiddleName", ""),
+                                    "LastName": emp.findtext("LastName", ""),
+                                    "EmploymentStatus": emp.findtext("EmploymentStatus", ""),
+                                    "HireDate": emp.findtext("HireDate", ""),
+                                    "HiredOn": emp.findtext("HiredOn", ""),
+                                    "TerminationDate": emp.findtext("TerminationDate", ""),
+                                    "TerminatedOn": emp.findtext("TerminatedOn", ""),
                                 }
-                                
-                                if first_employee:
-                                    final_data = {**full_data, **emp_data, **enroll_data}
-                                    first_employee = False
+
+                                enrollments = emp.findall("Enrollments/Enrollment")
+                                if enrollments:
+                                    for enroll in enrollments:
+                                        enroll_data = {
+                                            "PlanCost": enroll.findtext("PlanCost", ""),
+                                            "StartDate": enroll.findtext("StartDate", ""),
+                                            "EnrolledOn": enroll.findtext("EnrolledOn", ""),
+                                            "EndDate": enroll.findtext("EndDate", ""),
+                                            "EndedOn": enroll.findtext("EndedOn", ""),
+                                            "CoverageLevel": enroll.findtext("CoverageLevel", ""),
+                                            "CarrierPlanCode": enroll.findtext("CarrierPlanCode", ""),
+                                            "PriorCoverageStartDate": enroll.findtext("PriorCoverageStartDate", ""),
+                                        }
+
+                                        if first_employee:
+                                            final_data = {**full_data, **emp_data, **enroll_data}
+                                            first_employee = False
+                                        else:
+                                            # Keep company/header info empty for rows after the first for a clean look
+                                            final_data = {**{k: "" for k in full_data}, **emp_data, **enroll_data}
+
+                                        cleaned_data = {col: final_data.get(col, "") for col in EXPECTED_COLUMNS}
+                                        data_list.append(cleaned_data)
                                 else:
-                                    final_data = {**{k: "" for k in full_data}, **emp_data, **enroll_data}
-                                
-                                cleaned_data = {col: final_data.get(col, "") for col in EXPECTED_COLUMNS}
-                                data_list.append(cleaned_data)
-                        else:
-                            if first_employee:
-                                final_data = {**full_data, **emp_data}
-                                first_employee = False
-                            else:
-                                final_data = {**{k: "" for k in full_data}, **emp_data}
-                            
-                            cleaned_data = {col: final_data.get(col, "") for col in EXPECTED_COLUMNS}
-                            data_list.append(cleaned_data)
-                    elem.clear()
-        
-        df = pd.DataFrame(data_list, columns=EXPECTED_COLUMNS)
-        return df
+                                    if first_employee:
+                                        final_data = {**full_data, **emp_data}
+                                        first_employee = False
+                                    else:
+                                        final_data = {**{k: "" for k in full_data}, **emp_data}
 
-    st.title("XML to Excel Converter")
+                                    cleaned_data = {col: final_data.get(col, "") for col in EXPECTED_COLUMNS}
+                                    data_list.append(cleaned_data)
+                            elem.clear()
 
-    uploaded_xml = st.file_uploader("Upload XML File", type=["xml"])
+                # --- 3. CREATE DATAFRAME & EXPORT ---
+                df = pd.DataFrame(data_list, columns=EXPECTED_COLUMNS)
+                
+                # Convert DF to Excel in Memory
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Sheet1')
+                
+                processed_data = output.getvalue()
 
-    if uploaded_xml:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_xml:
-            tmp_xml.write(uploaded_xml.read())
-            tmp_xml.close()
-            
-            df = xml_to_exact_excel(tmp_xml.name)
-            st.write("Preview of Extracted Data:")
-            st.dataframe(df.head())
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_out:
-                df.to_excel(tmp_out.name, index=False)
+                st.success("✅ Conversion Successful!")
+                
+                # --- 4. DOWNLOAD BUTTON ---
                 st.download_button(
-                    label="XML Converted! Download Excel",
-                    data=open(tmp_out.name, "rb").read(),
-                    file_name="converted.xlsx",
+                    label="📥 Download Excel File",
+                    data=processed_data,
+                    file_name="Converted_XML_Data.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
+            except Exception as e:
+                st.error(f"An error occurred: {e}")

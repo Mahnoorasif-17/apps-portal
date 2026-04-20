@@ -1,8 +1,11 @@
-from rta_manifest_automation.processor.step1 import process_step_1
-from rta_manifest_automation.processor.step2 import process_step_2
-from rta_manifest_automation.processor.step3 import process_step_3
-from rta_manifest_automation.processor.step4 import process_step_4
-from rta_manifest_automation.processor.utils import *
+from .step1 import process_step_1
+from .step2 import process_step_2
+from .step3 import process_step_3
+from .step4 import process_step_4
+from .step5 import process_step_5
+from .step6 import process_step_6
+from .utils import *
+
 
 def run_processing_pipeline(filepath, return_output_path=False):
     try:
@@ -10,6 +13,8 @@ def run_processing_pipeline(filepath, return_output_path=False):
         process_step_2(wb)
         process_step_3(wb)
         process_step_4(wb)
+        process_step_5(wb)
+        process_step_6(wb)
         new_filename = generate_new_filename(filepath)
         wb.save(new_filename)
         if return_output_path:
