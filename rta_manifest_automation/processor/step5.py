@@ -5,7 +5,7 @@ from openpyxl.worksheet.filters import FilterColumn, Filters
 from .utils import *
  
 # Colors
-FILL_PURPLE = PatternFill(start_color="FFCC00FF", end_color="FFCC00FF", fill_type="solid")  # dark purple
+FILL_PURPLE = PatternFill(start_color="B44CB5", end_color="B44CB5", fill_type="solid")  # dark purple
 FILL_BLUE   = PatternFill(start_color="FF0099FF", end_color="FF0099FF", fill_type="solid")  # dark blue
 FILL_GREEN  = PatternFill(start_color="FF00CC00", end_color="FF00CC00", fill_type="solid")  # dark green
 FILL_GRAY   = PatternFill(start_color="FF808080", end_color="FF808080", fill_type="solid")  # gray for discount/coupon header
@@ -171,7 +171,8 @@ def process_step_5(workbook):
     step5.column_dimensions[helper_col_letter].hidden = True
  
     # --- Copy mailbox rows to Mailbox tab ---
-    _copy_rows_to_tab(step5, workbook, "Mailbox", mailbox_rows)
+    # Pass helper_col so _copy_rows_to_tab knows to exclude it
+    _copy_rows_to_tab(step5, workbook, "Mailbox", mailbox_rows, exclude_col=helper_col)
  
     # --- Build Mailbox Working tab ---
     build_mailbox_working(step5, workbook, mailbox_rows)
@@ -352,29 +353,39 @@ def _get_period_label(source, date_col):
     return "the period"
  
  
-def _copy_rows_to_tab(source, workbook, tab_name, row_indices):
+def _copy_rows_to_tab(source, workbook, tab_name, row_indices, exclude_col=None):
     """
     Copy specified rows from source sheet into a named tab.
     Always deletes and recreates tab clean. All rows forced to dark green fill.
+    exclude_col: 1-based column index to skip (e.g. the hidden _filter helper column).
     """
     if tab_name in workbook.sheetnames:
         del workbook[tab_name]
  
     ws = workbook.create_sheet(tab_name)
- 
-    for col in range(1, source.max_column + 1):
-        ws.cell(row=1, column=col).value = source.cell(row=1, column=col).value
+
+    # Determine which columns to copy — skip exclude_col
+    cols_to_copy = [
+        c for c in range(1, source.max_column + 1)
+        if c != exclude_col
+    ]
+
+    # Write header row using only the included columns
+    for out_col, src_col in enumerate(cols_to_copy, start=1):
+        ws.cell(row=1, column=out_col).value = source.cell(row=1, column=src_col).value
+
     freeze_top_and_filter(ws)
     highlight_rows(ws, header_row=1)
     autofit_columns(ws)
  
+    # Write data rows
     write_row = 2
     for src_row in row_indices:
-        for col in range(1, source.max_column + 1):
-            src_cell = source.cell(row=src_row, column=col)
-            tgt_cell = ws.cell(row=write_row, column=col)
-            tgt_cell.value = src_cell.value
-            tgt_cell.fill = FILL_GREEN
+        for out_col, src_col in enumerate(cols_to_copy, start=1):
+            src_cell = source.cell(row=src_row, column=src_col)
+            tgt_cell = ws.cell(row=write_row, column=out_col)
+            tgt_cell.value         = src_cell.value
+            tgt_cell.fill          = FILL_GREEN
             tgt_cell.number_format = src_cell.number_format
         write_row += 1
  
@@ -390,12 +401,6 @@ def build_mailbox_working(source, workbook, mailbox_rows):
     - ONLY if a RegID group contains a COUPON row → ALL rows in that group get 0 tax
     - Late fees and discounts alone do NOT zero out tax anymore
     - All other rows: Tax = Amount * 8.875%
- 
-    Example:
-      Renew Mailbox #371  $240  → tax = $21.30  (late fee present but no coupon)
-      Term: 2/28 to 5/28  $0   → tax = $0
-      Late Fee            $25  → tax = $2.22
-      (if a coupon were present → all three rows would get $0 tax)
     """
     TAB_NAME = "Mailbox Working"
  
@@ -465,15 +470,10 @@ def build_mailbox_working(source, workbook, mailbox_rows):
             item_lower.startswith("term:")
         )
  
-    # -----------------------------------------------------------------------
-    # UPDATED TAX LOGIC:
-    # Only COUPON rows in a RegID group trigger zero-tax for the whole group.
-    # Late fees and discounts alone do NOT zero out tax.
-    # -----------------------------------------------------------------------
+    # Only COUPON rows trigger zero-tax for the whole group
     zero_tax_regids = set()
     for src_row in mailbox_rows:
         item_val_scan = str(source.cell(src_row, column=src_item_col).value or "").lower()
-        # Only coupon triggers zero-tax — NOT late fee, NOT discount
         if "coupon" in item_val_scan:
             regid_scan = source.cell(src_row, column=src_regid_col).value
             if regid_scan:
@@ -521,8 +521,6 @@ def build_mailbox_working(source, workbook, mailbox_rows):
         ws.cell(row=write_row, column=COL_AMOUNT).value   = amount_val
  
         # --- Tax ---
-        # Zero tax for entire RegID group only if a COUPON is present in that group
-        # Late fees and discounts do NOT affect tax
         if regid_val in zero_tax_regids:
             ws.cell(row=write_row, column=COL_TAX).value = 0
         else:
