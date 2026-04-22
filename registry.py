@@ -40,7 +40,7 @@ APPS = {
         "caption": "Bank matching summary.", 
         "function": show_bank_recon, 
         "client": "ONHO", 
-        "logo": "logos/Bank-logo.png"
+        "logo": "logos/bank-logo.png"
     },
     "rta_manifest": {
         "title": "RTA Manifest", 
