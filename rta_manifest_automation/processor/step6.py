@@ -54,21 +54,15 @@ def process_step_6(workbook):
     ]
     step6.append(headers)
 
-    item_col = 5
+    item_col   = 5
     amount_col = 8
 
     TAX_RATE = 0.08875
 
+    # Only exclude these — everything else is included
     EXCLUDE_KEYWORDS = [
         "coupon", "discount", "void", "term",
         "late fee", "mailbox", "setup fee", "renew"
-    ]
-
-    VALID_ITEMS = [
-        "copies", "fax", "lamination", "passport", "postcard",
-        "printing", "scan", "box", "envelope", "tape",
-        "bubble", "paper", "stamp", "tube", "crate",
-        "packing", "rental", "post office"
     ]
 
     TAXABLE_KEYWORDS = [
@@ -102,17 +96,20 @@ def process_step_6(workbook):
         item_clean = clean_text(item_raw)
         amount     = parse_amount(safe_cell(step5, row, amount_col))
 
+        # Skip completely empty rows
         if item_clean == "" and amount == 0:
             continue
 
+        # Skip colored rows (purple, green, blue) — only plain rows go to Step 6
         if not is_no_fill(step5.cell(row=row, column=item_col)):
             continue
 
+        # Skip excluded keywords
         if any(k in item_clean for k in EXCLUDE_KEYWORDS):
             continue
 
-        if not any(k in item_clean for k in VALID_ITEMS):
-            continue
+        # --- REMOVED: VALID_ITEMS whitelist ---
+        # All non-excluded, non-colored rows are now included
 
         # TAX
         is_taxable   = any(k in item_clean for k in TAXABLE_KEYWORDS)

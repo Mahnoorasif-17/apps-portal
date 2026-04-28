@@ -185,36 +185,12 @@ def process_step_5(workbook):
  
  
 def build_void_discount_coupons(source, workbook, purple_rows):
-    """
-    Build 'Void-Discount-Coupons' tab.
- 
-    Layout:
-    -------
-    TOP SECTION — Purple rows (Void, Petty Cash, Regular:Saved, $0 amount, Tip)
-      - Header row: styled with purple fill + filter + freeze
-      - Data rows: purple fill (same FILL_PURPLE as Step 5)
- 
-    BLANK ROW (separator)
- 
-    BOTTOM SECTION — Discounts & Coupons
-      - Sub-header row: gray fill, bold, with label "Retail Discount for the [period]"
-        and column headers: UID, RegID, Date, Time, Item, Tender, Customer, Amount
-      - Data rows: white/no fill
- 
-    Rules:
-    - Discount/Coupon rows: item contains 'coupon', 'discount'
-    - These are sourced fresh from step5 (not filtered by purple_rows)
-    - Both sections share same columns: UID, RegID, Date, Time, Item, Tender, Customer, Amount
-    - Top header has freeze panes at A2 and autofilter
-    - Amount column formatted as currency
-    - UID formatted as full number (no scientific notation)
-    """
     TAB_NAME = "Void-Discount-Coupons"
- 
+
     if TAB_NAME in workbook.sheetnames:
         del workbook[TAB_NAME]
     ws = workbook.create_sheet(TAB_NAME)
- 
+
     uid_col      = get_column_index_by_header(source, "UID", 1)
     regid_col    = get_column_index_by_header(source, "RegID", 1)
     date_col     = get_column_index_by_header(source, "Date", 1)
@@ -223,7 +199,7 @@ def build_void_discount_coupons(source, workbook, purple_rows):
     tender_col   = get_column_index_by_header(source, "Tender", 1)
     customer_col = get_column_index_by_header(source, "Customer", 1)
     amount_col   = get_column_index_by_header(source, "Amount", 1)
- 
+
     COL_UID      = 1
     COL_REGID    = 2
     COL_DATE     = 3
@@ -233,20 +209,22 @@ def build_void_discount_coupons(source, workbook, purple_rows):
     COL_CUSTOMER = 7
     COL_AMOUNT   = 8
     TOTAL_COLS   = 8
- 
+
     COLUMN_HEADERS = ["UID", "RegID", "Date", "Time", "Item", "Tender", "Customer", "Amount"]
- 
+
+    # --- Header row ---
     for col_idx, header in enumerate(COLUMN_HEADERS, start=1):
         cell = ws.cell(row=1, column=col_idx)
         cell.value = header
         cell.fill  = FILL_PURPLE
         cell.font  = Font(bold=True, color="FFFFFF")
         cell.alignment = Alignment(horizontal="center", vertical="center")
- 
+
     ws.freeze_panes = "A2"
     last_col_letter = get_column_letter(TOTAL_COLS)
     ws.auto_filter.ref = f"A1:{last_col_letter}1"
- 
+
+    # --- Purple rows only ---
     write_row = 2
     for src_row in sorted(purple_rows):
         _write_row_to_sheet(
@@ -258,45 +236,7 @@ def build_void_discount_coupons(source, workbook, purple_rows):
             TOTAL_COLS, fill=FILL_PURPLE
         )
         write_row += 1
- 
-    write_row += 1  # blank separator row
- 
-    period_label = _get_period_label(source, date_col)
-    gray_header_row = write_row
- 
-    label_cell = ws.cell(row=gray_header_row, column=1)
-    label_cell.value = f"Retail Discount for the {period_label}"
-    label_cell.fill  = FILL_GRAY
-    label_cell.font  = Font(bold=True, color="FFFFFF")
-    label_cell.alignment = Alignment(horizontal="left", vertical="center")
- 
-    for col_idx, header in enumerate(COLUMN_HEADERS, start=1):
-        cell = ws.cell(row=gray_header_row, column=col_idx)
-        if col_idx == 1:
-            pass
-        else:
-            cell.value = header
-            cell.fill  = FILL_GRAY
-            cell.font  = Font(bold=True, color="FFFFFF")
-            cell.alignment = Alignment(horizontal="center", vertical="center")
- 
-    write_row += 1
- 
-    DISCOUNT_KEYWORDS = ["coupon", "discount"]
- 
-    for src_row in range(2, source.max_row + 1):
-        item_val = str(source.cell(row=src_row, column=item_col).value or "").strip().lower()
-        if any(kw in item_val for kw in DISCOUNT_KEYWORDS):
-            _write_row_to_sheet(
-                ws, source, write_row, src_row,
-                uid_col, regid_col, date_col, time_col,
-                item_col, tender_col, customer_col, amount_col,
-                COL_UID, COL_REGID, COL_DATE, COL_TIME,
-                COL_ITEM, COL_TENDER, COL_CUSTOMER, COL_AMOUNT,
-                TOTAL_COLS, fill=None
-            )
-            write_row += 1
- 
+
     autofit_columns(ws)
  
  
