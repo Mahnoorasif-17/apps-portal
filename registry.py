@@ -8,7 +8,7 @@ from xmltoexcel.splittingxml_mon_year_newest import show_xml_converter
 # --- CLIENT logos ---
 CLIENTS = [
     {"id": "EION", "logo": "logos/ei1-logo.png", "desc": "Internal Management & Timesheets"},
-    {"id": "ONHO", "logo": "logos/onho-logo.png", "desc": "Logistics, Banking & Billing"},
+    {"id": "ONHO", "logo": "logos/onho-logo.png", "desc": "RTA, Logistics, Banking & Billing"},
     {"id": "REDH", "logo": "logos/redh-logo.png", "desc": "XML Conversion & File Tools"}
 ]
 
@@ -37,14 +37,14 @@ APPS = {
     },
     "bank": {
         "title": "Bank Recon", 
-        "caption": "Bank matching summary.", 
+        "caption": "Bank and RTA matching summary.", 
         "function": show_bank_recon, 
         "client": "ONHO", 
         "logo": "logos/bank-logo.png"
     },
     "rta_manifest": {
         "title": "RTA Manifest", 
-        "caption": "Manifest extractor.", 
+        "caption": "Manifest extractor and RTA Formatter.", 
         "function": show_rta_manifest, 
         "client": "ONHO", 
         "logo": "logos/rta-logo.png"
