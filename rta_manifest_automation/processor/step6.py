@@ -66,9 +66,9 @@ def process_step_6(workbook):
     ]
 
     TAXABLE_KEYWORDS = [
-        "copies", "fax", "lamination",
+        "copies", "misc  taxable", "fax", "lamination",
         "passport", "postcard",
-        "printing", "scan"
+        "printing", "scan", "office rental"
     ]
 
     def is_no_fill(cell):
