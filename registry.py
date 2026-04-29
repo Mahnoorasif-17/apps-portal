@@ -4,6 +4,7 @@ from mailbox_compilation_app.app import show_mailbox
 from ONHO_Bank_Recognition.app import show_bank_recon
 from rta_manifest_automation.app import show_rta_manifest
 from xmltoexcel.splittingxml_mon_year_newest import show_xml_converter
+from ONHO_customer_data_formatter.app import show_customer_formatter
 
 # --- CLIENT logos ---
 CLIENTS = [
@@ -55,5 +56,13 @@ APPS = {
         "function": show_xml_converter, 
         "client": "REDH", 
         "logo": "logos/XML-logo.png"
+    },
+    "customer_data_formatter": {
+        "title": "Customer Data Formatter", 
+        "caption": "ONHO customer data formatting tool.", 
+        "function": show_customer_formatter, 
+        "client": "ONHO", 
+        "logo": "logos/customer_formatter_logo.png"
     }
 }
+
