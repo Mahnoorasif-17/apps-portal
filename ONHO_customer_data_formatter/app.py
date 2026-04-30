@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import re
 from io import BytesIO
-from openpyxl.styles import Alignment
 
 # --- CORE LOGIC ---
 def process_excel(input_file):
@@ -106,20 +105,8 @@ def process_excel(input_file):
     output_df['LastActivityDTG'] = df['LastActivityDTG'].apply(clean_date)
     output_df['Note'] = df['Note']
 
-    # --- EXCEL FORMATTING IN MEMORY ---
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        output_df.to_excel(writer, index=False, sheet_name='Data')
-        ws = writer.sheets['Data']
-        for column_cells in ws.columns:
-            max_length = max(len(str(cell.value)) for cell in column_cells)
-            ws.column_dimensions[column_cells[0].column_letter].width = max_length + 3
-        for row in ws.iter_rows():
-            for cell in row:
-                cell.alignment = Alignment(horizontal='right')
-        ws['O1'].alignment = Alignment(horizontal='left')
-    
-    return output.getvalue()
+    # Convert DataFrame to CSV string (UTF-8 with no index)
+    return output_df.to_csv(index=False).encode('utf-8')
 
 # --- WRAPPER FUNCTION FOR PORTAL ---
 def show_customer_formatter():
@@ -144,12 +131,12 @@ def show_customer_formatter():
         if st.button("Process and Format"):
             with st.spinner("Processing..."):
                 try:
-                    processed_data = process_excel(uploaded_file)
+                    processed_csv = process_excel(uploaded_file)
                     st.download_button(
-                        label="📥 Download Formatted Excel",
-                        data=processed_data,
-                        file_name="ONHO_Customer_Formatted.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        label="📥 Download Formatted CSV",
+                        data=processed_csv,
+                        file_name="ONHO_Customer_Formatted.csv",
+                        mime="text/csv"
                     )
                 except Exception as e:
                     st.error(f"An error occurred: {e}")
