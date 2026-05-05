@@ -25,32 +25,37 @@ def process_excel(input_file):
         text = re.sub(rf'(\d+)(st|nd|rd|th)', lambda m: m.group(1) + m.group(2).upper(), text, flags=re.IGNORECASE)
         return text
 
-    split_keywords = ['ST', 'AVE', 'RD', 'DR', 'PL', 'BLVD', 'LN', 'ROAD', 'STREET', 'AVENUE', 'APT', 'STE', 'FRNT', 'OFC']
+    # Keywords that indicate a split to Address Line 2
+    split_keywords = ['APT', 'STE', 'UNIT', 'FRNT', 'OFC', 'FL', 'RM', 'SUITE', 'PH', 'BLDG', 'PMB']
     
     def split_address_final(row):
         addr1 = str(row['Address1']).strip() if pd.notna(row['Address1']) else ""
         addr2 = str(row['Address2']).strip() if pd.notna(row['Address2']) else ""
         if addr2.lower() == 'nan': addr2 = ""
+        
+        # Build pattern to find where the unit starts
         split_pattern = rf'\b({"|".join(split_keywords)})\b|#'
         match = re.search(split_pattern, addr1, flags=re.IGNORECASE)
+        
         if match:
-            split_idx = match.end()
+            # We split AT the start of the keyword (e.g., before "APT")
+            split_idx = match.start()
             new_addr1 = addr1[:split_idx].strip().rstrip(',')
             new_addr2 = addr1[split_idx:].strip()
-            dir_match = re.match(r'^([NSEW])\b', new_addr2, flags=re.IGNORECASE)
-            if dir_match:
-                direction = dir_match.group(1).upper()
-                new_addr1 = f"{new_addr1} {direction}"
-                new_addr2 = new_addr2[len(direction):].strip()
+            
+            # If there was already something in Address2, merge it
             if addr2:
                 new_addr2 = (new_addr2 + " " + addr2).strip()
-            new_addr2 = new_addr2.replace("# ", "#")
+            
             return new_addr1, new_addr2
+            
         return addr1, addr2
 
+    # Apply the split
     addr_splits = df.apply(split_address_final, axis=1, result_type='expand')
     df['Address1_Mod'] = addr_splits[0].apply(apply_formatting)
     df['Address2_Mod'] = addr_splits[1].astype(str).str.upper()
+    df['Address2_Mod'] = df['Address2_Mod'].replace('NAN', '').replace('NONE', '')
 
     def clean_date(val):
         if pd.isna(val) or val == "": return ""
@@ -83,7 +88,7 @@ def process_excel(input_file):
     output_df['Address3 (Unmodified)'] = df['Address3']
     output_df['City (Unmodified)'] = df['City']
     output_df['Address1 (Modified)'] = df['Address1_Mod']
-    output_df['Address2 (Modified)'] = df['Address2_Mod'].replace('NAN', '')
+    output_df['Address2 (Modified)'] = df['Address2_Mod']
     output_df['Address3 (Modified)'] = df['Address3']
     output_df['City (Modified)'] = df['City'].apply(apply_formatting)
     output_df['City (Modified)'] = output_df['City (Modified)'].str.replace('Manhattan', 'NEW YORK', case=False, regex=True)
@@ -93,10 +98,9 @@ def process_excel(input_file):
     output_df['CountryName'] = df['CountryName'].replace(['USA', 'US'], 'United States')
     
     def phone_to_num(val):
+        if pd.isna(val) or str(val).strip() == "": return ""
         clean = re.sub(r'[\s\-\(\)]+', '', str(val))
-        if clean == 'nan' or clean == "": return ""
-        try: return int(float(clean))
-        except: return clean
+        return clean
 
     output_df['VoicePhoneNo'] = df['VoicePhoneNo'].apply(phone_to_num)
     output_df['VoicePhoneNo2'] = df['VoicePhoneNo2'].apply(phone_to_num)
@@ -105,12 +109,9 @@ def process_excel(input_file):
     output_df['LastActivityDTG'] = df['LastActivityDTG'].apply(clean_date)
     output_df['Note'] = df['Note']
 
-    # Convert DataFrame to CSV string (UTF-8 with no index)
     return output_df.to_csv(index=False).encode('utf-8')
 
-# --- WRAPPER FUNCTION FOR PORTAL ---
 def show_customer_formatter():
-    # CSS to make file uploader labels look original and big
     st.markdown("""
         <style>
             .stFileUploader label p {
