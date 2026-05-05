@@ -25,7 +25,6 @@ def process_excel(input_file):
         text = re.sub(rf'(\d+)(st|nd|rd|th)', lambda m: m.group(1) + m.group(2).upper(), text, flags=re.IGNORECASE)
         return text
 
-    # Keywords that indicate a split to Address Line 2
     split_keywords = ['APT', 'STE', 'UNIT', 'FRNT', 'OFC', 'FL', 'RM', 'SUITE', 'PH', 'BLDG', 'PMB']
     
     def split_address_final(row):
@@ -33,20 +32,21 @@ def process_excel(input_file):
         addr2 = str(row['Address2']).strip() if pd.notna(row['Address2']) else ""
         if addr2.lower() == 'nan': addr2 = ""
         
-        # Build pattern to find where the unit starts
         split_pattern = rf'\b({"|".join(split_keywords)})\b|#'
         match = re.search(split_pattern, addr1, flags=re.IGNORECASE)
         
         if match:
-            # We split AT the start of the keyword (e.g., before "APT")
             split_idx = match.start()
             new_addr1 = addr1[:split_idx].strip().rstrip(',')
             new_addr2 = addr1[split_idx:].strip()
             
-            # If there was already something in Address2, merge it
             if addr2:
                 new_addr2 = (new_addr2 + " " + addr2).strip()
             
+            # --- FIX FOR #1C (REMOVING SPACES) ---
+            if new_addr2.startswith('#'):
+                new_addr2 = new_addr2.replace(" ", "")
+                
             return new_addr1, new_addr2
             
         return addr1, addr2
