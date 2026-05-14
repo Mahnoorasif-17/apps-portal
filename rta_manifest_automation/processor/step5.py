@@ -379,10 +379,13 @@ def build_mailbox_working(source, workbook, mailbox_rows):
     }
     for col, header in headers.items():
         ws.cell(row=1, column=col).value = header
- 
-    format_header(ws, header_row=1)
-    freeze_top_and_filter(ws)
+
+    # --- Direct freeze and filter instead of format_header (avoids RegID check) ---
+    ws.freeze_panes = "A2"
+    from openpyxl.utils import get_column_letter as gcl
+    ws.auto_filter.ref = f"A1:{gcl(13)}1"
     highlight_rows(ws, header_row=1)
+    # ------------------------------------------------------------------------------
  
     import re
  
