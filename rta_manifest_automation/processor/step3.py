@@ -72,9 +72,10 @@ def forward_fill_columns(sheet):
 
 
 def get_mechanical_totals_row(sheet):
-    for row in range(1, sheet.max_row + 1):
-        val = sheet.cell(row=row, column=get_column_index_by_header(
-            sheet, "Item", 1)).value
+    # --- Fast: get item col index once, scan only that column ---
+    item_col = get_column_index_by_header(sheet, "Item", 1)
+    for row in range(sheet.max_row, 1, -1):  # scan from bottom — mech row is near end
+        val = sheet.cell(row=row, column=item_col).value
         if isinstance(val, str) and "mechanical totals" in val.lower():
             return row
     raise ValidationError("'Mechanical Totals' row not found.")
@@ -94,10 +95,9 @@ def fill_customer_column_by_regid(sheet):
     regid_col = get_column_index_by_header(sheet, "RegID", header_row)
     customer_col = get_column_index_by_header(sheet, "Customer", header_row)
 
-    # Step 1: Sort by RegID (ascending)
-    sort_sheet_by_column(sheet, regid_col, header_row, last_data_row)
+    # --- Sort REMOVED — preserves original transaction order ---
 
-    # Step 2: Group-wise fill
+    # Group-wise fill — preserve original data order
     current_regid = None
     current_customer = None
 

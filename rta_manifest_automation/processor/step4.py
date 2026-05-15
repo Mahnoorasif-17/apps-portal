@@ -1,53 +1,42 @@
+import time
 from copy import copy
 from openpyxl.styles import PatternFill, Font
 from .utils import *
 from datetime import date
 
-FILL_LIGHT_ORANGE = PatternFill(
-    start_color="FFFFD580", end_color="FFFFD580", fill_type="solid")
-FILL_LIGHT_PURPLE = PatternFill(
-    start_color="FFE5CCFF", end_color="FFE5CCFF", fill_type="solid")
-FILL_LIGHT_BLUE = PatternFill(
-    start_color="FFCCEEFF", end_color="FFCCEEFF", fill_type="solid")
-FILL_LIGHT_GREEN = PatternFill(
-    start_color="FFCCFFCC", end_color="FFCCFFCC", fill_type="solid")
+FILL_LIGHT_ORANGE = PatternFill(start_color="FFFFD580", end_color="FFFFD580", fill_type="solid")
+FILL_LIGHT_PURPLE = PatternFill(start_color="FFE5CCFF", end_color="FFE5CCFF", fill_type="solid")
+FILL_LIGHT_BLUE   = PatternFill(start_color="FFCCEEFF", end_color="FFCCEEFF", fill_type="solid")
+FILL_LIGHT_GREEN  = PatternFill(start_color="FFCCFFCC", end_color="FFCCFFCC", fill_type="solid")
 
 
 def process_step_4(workbook):
     step4 = copy_sheet(workbook, "Step 3", "Step 4")
-
     remove_empty_columns(step4)
     remove_columns_by_header(step4, ["SubTotal", "Tax", "Total", "User"])
     drop_rows_with_empty_item(step4)
     remove_footer_and_mech_rows(step4)
     clear_all_highlighting(step4)
-
     format_header(step4, header_row=1)
     highlight_header_row(step4, header_row=1)
     autofit_columns(step4)
-
-    # --- Add UID column AFTER all cleanup steps ---
     add_uid_column(step4)
-    # ----------------------------------------------
-
     distribute_items_to_sheets(step4, workbook)
 
 
 def add_uid_column(sheet):
-    # Insert blank column at position A (shift everything right)
     sheet.insert_cols(1)
-    # Set header
     sheet.cell(row=1, column=1).value = "UID"
 
-    # Get date prefix from the last data row's Date column (yymmdd)
     date_col = get_column_index_by_header(sheet, "Date", 1)
     last_date = None
-    for row in range(2, sheet.max_row + 1):
-        val = sheet.cell(row=row, column=date_col).value
-        if val:
-            last_date = val
+    for row_cells in sheet.iter_rows(min_row=2, max_row=sheet.max_row,
+                                      min_col=date_col, max_col=date_col):
+        v = row_cells[0].value
+        if v:
+            last_date = v
+
     if last_date is None:
-        from datetime import date
         last_date = date.today()
     if hasattr(last_date, 'strftime'):
         prefix = last_date.strftime("%y%m%d")
@@ -55,195 +44,155 @@ def add_uid_column(sheet):
         from datetime import datetime
         prefix = datetime.strptime(str(last_date), "%Y-%m-%d").strftime("%y%m%d")
 
-    # Fill UID for every data row
+    max_col = sheet.max_column
     counter = 1
-    for row in range(2, sheet.max_row + 1):
-        # Only assign UID if the row has any data
-        if any(sheet.cell(row=row, column=col).value for col in range(2, sheet.max_column + 1)):
-            sheet.cell(row=row, column=1).value = int(f"{prefix}{counter:04d}")
+    for row_cells in sheet.iter_rows(min_row=2, max_row=sheet.max_row,
+                                      min_col=2, max_col=max_col):
+        if any(c.value for c in row_cells):
+            sheet.cell(row=row_cells[0].row, column=1).value = int(f"{prefix}{counter:04d}")
             counter += 1
 
 
 def distribute_items_to_sheets(source, workbook):
     mapping = [
-        ("DHL", "dhl", FILL_LIGHT_ORANGE, ["dhl drop off"]),
-        ("USPS", "usps", FILL_LIGHT_PURPLE, ["void"]),
+        ("DHL",   "dhl",   FILL_LIGHT_ORANGE, ["dhl drop off"]),
+        ("USPS",  "usps",  FILL_LIGHT_PURPLE, ["void"]),
         ("FedEx", "fedex", FILL_LIGHT_BLUE,   ["void"]),
-        ("UPS", "ups", FILL_LIGHT_GREEN,      ["void"])
+        ("UPS",   "ups",   FILL_LIGHT_GREEN,  ["void"])
     ]
-    TAB_COLORS = {
-        "DHL": "FFD580", "USPS": "E5CCFF", "FedEx": "CCEEFF", "UPS": "CCFFCC"
-    }
+    TAB_COLORS = {"DHL": "FFD580", "USPS": "E5CCFF", "FedEx": "CCEEFF", "UPS": "CCFFCC"}
 
-    item_col = get_column_index_by_header(source, "Item", 1)
-    regid_col = get_column_index_by_header(source, "RegID", 1)
+    item_col     = get_column_index_by_header(source, "Item", 1)
+    regid_col    = get_column_index_by_header(source, "RegID", 1)
+    customer_col = get_column_index_by_header(source, "Customer", 1)
+    amount_col   = get_column_index_by_header(source, "Amount", 1)
+    max_col = source.max_column
+    max_row = source.max_row
 
+    # Load source into memory
+    src_data = []
+    src_formats = []
+    for row in source.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
+        src_data.append([c.value for c in row])
+        src_formats.append([c.number_format for c in row])
+
+    # RegID -> indices map for fast declared-value fallback
+    regid_to_indices = {}
+    for idx in range(1, len(src_data)):
+        rid = src_data[idx][regid_col - 1]
+        if rid is not None:
+            regid_to_indices.setdefault(rid, []).append(idx)
+
+    # Create service sheets with headers
     service_sheets = {}
-    regid_service_map = {}
-
-    # 1st pass: copy regular service rows
     for sheet_name, keyword, fill, excludes in mapping:
         target = workbook.create_sheet(sheet_name)
         target.sheet_properties.tabColor = TAB_COLORS[sheet_name]
-        copy_headers(source, target)
+        for col_idx, val in enumerate(src_data[0], start=1):
+            target.cell(row=1, column=col_idx).value = val
+        service_sheets[sheet_name] = {"sheet": target, "fill": fill, "rows_buffer": []}
+
+    # Classification pass
+    i = 1
+    while i < len(src_data):
+        row_data = src_data[i]
+        row_fmts = src_formats[i]
+        item_val = str(row_data[item_col - 1] or "")
+        item_lower = item_val.lower()
+        regid = row_data[regid_col - 1]
+        customer = str(row_data[customer_col - 1] or "")
+        next_idx = i + 1
+
+        # Declared value pairing
+        if "declared value" in item_lower:
+            handled = False
+            if next_idx < len(src_data):
+                next_data = src_data[next_idx]
+                next_item = str(next_data[item_col - 1] or "").lower()
+                next_regid = next_data[regid_col - 1]
+                if regid == next_regid:
+                    for sheet_name, keyword, fill, excludes in mapping:
+                        if keyword in next_item and not any(ex in next_item for ex in excludes):
+                            service_sheets[sheet_name]["rows_buffer"].append((row_data, row_fmts))
+                            handled = True
+                            break
+            if not handled and regid in regid_to_indices:
+                for search_idx in regid_to_indices[regid]:
+                    if search_idx == i:
+                        continue
+                    search_item = str(src_data[search_idx][item_col - 1] or "").lower()
+                    for sheet_name, keyword, fill, excludes in mapping:
+                        if keyword in search_item and not any(ex in search_item for ex in excludes):
+                            service_sheets[sheet_name]["rows_buffer"].append((row_data, row_fmts))
+                            handled = True
+                            break
+                    if handled:
+                        break
+            i += 1
+            continue
+
+        # Service row check
+        matched_service = None
+        for sheet_name, keyword, fill, excludes in mapping:
+            if keyword in item_lower and not any(ex in item_lower for ex in excludes):
+                matched_service = (sheet_name, keyword, fill, excludes)
+                break
+
+        if matched_service is None:
+            i += 1
+            continue
+
+        sheet_name, keyword, fill, excludes = matched_service
+        service_sheets[sheet_name]["rows_buffer"].append((row_data, row_fmts))
+
+        # Existing discount/coupon
+        has_existing_discount = False
+        if next_idx < len(src_data):
+            next_data = src_data[next_idx]
+            next_fmts = src_formats[next_idx]
+            next_item = str(next_data[item_col - 1] or "").lower()
+            next_regid = next_data[regid_col - 1]
+            if (next_regid == regid and
+                ("discount" in next_item or "coupon" in next_item) and
+                "void" not in next_item):
+                service_sheets[sheet_name]["rows_buffer"].append((next_data, next_fmts))
+                has_existing_discount = True
+
+        # Empire 50% discount
+        if customer.strip().lower() == "empire merchants chelsea" and not has_existing_discount:
+            discount_data = list(row_data)
+            discount_fmts = list(row_fmts)
+            discount_data[item_col - 1] = "50% discount"
+            orig_amount = row_data[amount_col - 1]
+            if isinstance(orig_amount, (int, float)):
+                discount_data[amount_col - 1] = -abs(orig_amount) / 2
+            service_sheets[sheet_name]["rows_buffer"].append((discount_data, discount_fmts))
+
+        i += 1
+
+    # Write buffers to service sheets
+    for sheet_name, info in service_sheets.items():
+        target = info["sheet"]
+        fill = info["fill"]
+        write_row = 2
+        for row_data, row_fmts in info["rows_buffer"]:
+            for col_idx, (val, fmt) in enumerate(zip(row_data, row_fmts), start=1):
+                cell = target.cell(row=write_row, column=col_idx)
+                cell.value = val
+                cell.fill = fill
+                if fmt:
+                    cell.number_format = fmt
+            write_row += 1
         format_header(target, header_row=1)
         freeze_top_and_filter(target)
         highlight_rows(target, header_row=1)
-        service_sheets[sheet_name] = {"sheet": target, "row": 2, "fill": fill}
         autofit_columns(target)
 
-    for row in range(2, source.max_row + 1):
-        val = str(source.cell(row=row, column=item_col).value or "")
-        regid = source.cell(row=row, column=regid_col).value
-        customer = str(source.cell(
-            row=row, column=get_column_index_by_header(source, "Customer")).value or "")
-
-        for sheet_name, keyword, fill, excludes in mapping:
-            if keyword.lower() in val.lower() and not any(ex in val.lower() for ex in excludes):
-
-                tgt = service_sheets[sheet_name]
-
-                # Copy main service row
-                color_row(source, row, fill)
-                service_row_pos = insert_row_above_regid(
-                    source, tgt["sheet"], row, fill, regid, regid_col
-                )
-                tgt["row"] += 1
-
-                next_row = row + 1
-                next_item = ""
-                next_regid = None
-
-                if next_row <= source.max_row:
-                    next_item = str(source.cell(
-                        next_row, column=item_col).value or "")
-                    next_regid = source.cell(next_row, column=regid_col).value
-
-                # ---------------------------------------------------
-                # copy discount/coupon if present
-                # ---------------------------------------------------
-                has_existing_discount = (
-                    next_regid == regid and
-                    any(kw in next_item.lower() for kw in ["discount", "coupon"]) and
-                    "void" not in next_item.lower()
-                )
-
-                if has_existing_discount:
-                    color_row(source, next_row, fill)
-                    insert_at = service_row_pos + 1
-                    tgt["sheet"].insert_rows(insert_at)
-
-                    for col in range(1, source.max_column + 1):
-                        src_cell = source.cell(row=next_row, column=col)
-                        tgt_cell = tgt["sheet"].cell(row=insert_at, column=col)
-
-                        tgt_cell.value = src_cell.value
-                        tgt_cell.fill = fill
-                        tgt_cell.number_format = src_cell.number_format
-                    tgt["row"] += 1
-
-                # ---------------------------------------------------
-                # Empire Merchants Chelsea 50% discount logic
-                # ---------------------------------------------------
-                if customer.strip().lower() == "empire merchants chelsea" and not has_existing_discount:
-                    insert_at = service_row_pos + 1
-                    tgt["sheet"].insert_rows(insert_at)
-
-                    for col in range(1, source.max_column + 1):
-                        src_cell = source.cell(row=row, column=col)
-                        tgt_cell = tgt["sheet"].cell(row=insert_at, column=col)
-                        tgt_cell.value = src_cell.value
-                        tgt_cell.fill = fill
-                        tgt_cell.number_format = src_cell.number_format
-
-                    # Modify the row to represent 50% discount
-                    tgt["sheet"].cell(
-                        row=insert_at, column=item_col).value = "50% discount"
-                    amount_col = get_column_index_by_header(source, "Amount")
-                    original_amount = source.cell(
-                        row=row, column=amount_col).value
-                    if isinstance(original_amount, (int, float)):
-                        tgt["sheet"].cell(
-                            row=insert_at, column=amount_col).value = -abs(original_amount) / 2
-
-                    tgt["row"] += 1
-
-                break
-
-    # 2nd pass: handle "Declared value"
-    for row in range(2, source.max_row):
-        item_val = str(source.cell(row=row, column=item_col).value or "")
-        if "declared value" in item_val.lower():
-            regid = source.cell(row=row, column=regid_col).value
-
-            # Prefer the row below
-            next_row = row + 1
-            if next_row <= source.max_row:
-                next_item = str(source.cell(
-                    next_row, column=item_col).value or "")
-                next_regid = source.cell(next_row, column=regid_col).value
-
-                if regid == next_regid:
-                    for sheet_name, keyword, _, excludes in mapping:
-                        if keyword.lower() in next_item.lower() and not any(ex in next_item.lower() for ex in excludes):
-                            color_row(
-                                source, row, service_sheets[sheet_name]["fill"])
-                            tgt = service_sheets[sheet_name]
-                            # fixed: insert ABOVE so declared value comes before service row
-                            insert_row_above_regid(
-                                source_sheet=source,
-                                target_sheet=tgt["sheet"],
-                                source_row=row,
-                                target_fill=tgt["fill"],
-                                regid=regid,
-                                regid_col=regid_col
-                            )
-                            tgt["row"] += 1
-                            break
-                    continue
-
-            # Else search entire regid group
-            for search_row in range(2, source.max_row + 1):
-                if source.cell(search_row, column=regid_col).value == regid:
-                    search_item = str(source.cell(
-                        search_row, column=item_col).value or "")
-                    for sheet_name, keyword, _, excludes in mapping:
-                        if keyword.lower() in search_item.lower() and not any(ex in search_item.lower() for ex in excludes):
-                            color_row(
-                                source, row, service_sheets[sheet_name]["fill"])
-                            tgt = service_sheets[sheet_name]
-                            # fixed: insert ABOVE so declared value comes before service row
-                            insert_row_above_regid(
-                                source_sheet=source,
-                                target_sheet=tgt["sheet"],
-                                source_row=row,
-                                target_fill=tgt["fill"],
-                                regid=regid,
-                                regid_col=regid_col
-                            )
-                            tgt["row"] += 1
-                            break
-                    break
-
-    # --- Build 3PL sheet: all services combined, NO Account tender ---
-    # (auto-excludes E-Scribers, Empire, Feshaire - all use Account tender)
     build_3pl_sheet(workbook, service_sheets)
-    # -----------------------------------------------------------------
-
-    # --- Build Account sheets: E-Scribers, Empire, Feshaire ---
-    # Only created if data exists for that customer
     build_account_sheets(source, workbook, mapping)
-    # ----------------------------------------------------------
 
 
 def build_3pl_sheet(workbook, service_sheets):
-    """
-    3PL = all service sheets (UPS, FedEx, USPS, DHL) combined.
-    Excludes:
-      - Rows where Tender == 'Account' (E-Scribers, Empire, Feshaire)
-      - Rows where Item contains 'void', 'discount', 'coupon'
-      - Rows with no UID (blank col A) — these are discount/coupon inserted rows
-    """
     SERVICE_ORDER = ["DHL", "USPS", "FedEx", "UPS"]
     EXCLUDED_TENDER = "account"
     EXCLUDED_ITEM_KEYWORDS = ["void", "discount"]
@@ -251,80 +200,69 @@ def build_3pl_sheet(workbook, service_sheets):
     if "3PL" in workbook.sheetnames:
         del workbook["3PL"]
     sheet_3pl = workbook.create_sheet("3PL")
-    
 
-    tender_col = None
-    item_col_3pl = None
-    uid_col = None
-    headers_written = False
-
+    first_sheet = None
     for sname in SERVICE_ORDER:
-        if sname not in workbook.sheetnames:
+        if sname in workbook.sheetnames:
+            first_sheet = workbook[sname]
+            break
+    if first_sheet is None:
+        return
+
+    header_values = []
+    tender_col = item_col_3pl = uid_col = None
+    for col in range(1, first_sheet.max_column + 1):
+        val = first_sheet.cell(row=1, column=col).value
+        header_values.append(val)
+        hv = str(val or "").strip().lower()
+        if hv == "tender":
+            tender_col = col
+        elif hv == "item":
+            item_col_3pl = col
+        elif hv == "uid":
+            uid_col = col
+
+    for col_idx, val in enumerate(header_values, start=1):
+        sheet_3pl.cell(row=1, column=col_idx).value = val
+
+    write_row = 2
+    for sname in SERVICE_ORDER:
+        if sname not in service_sheets:
             continue
-        src = workbook[sname]
-
-        if not headers_written:
-            for col in range(1, src.max_column + 1):
-                sheet_3pl.cell(row=1, column=col).value = src.cell(row=1, column=col).value
-            for col in range(1, src.max_column + 1):
-                header_val = str(src.cell(row=1, column=col).value or "").strip().lower()
-                if header_val == "tender":
-                    tender_col = col
-                if header_val == "item":
-                    item_col_3pl = col
-                if header_val == "uid":
-                    uid_col = col
-            format_header(sheet_3pl, header_row=1)
-            freeze_top_and_filter(sheet_3pl)
-            highlight_rows(sheet_3pl, header_row=1)
-            autofit_columns(sheet_3pl)
-            headers_written = True
-
-        write_row = sheet_3pl.max_row + 1
-
-        for src_row in range(2, src.max_row + 1):
+        info = service_sheets[sname]
+        fill = info["fill"]
+        for row_data, row_fmts in info["rows_buffer"]:
             if tender_col:
-                tender_val = str(src.cell(src_row, column=tender_col).value or "").strip().lower()
-                if tender_val == EXCLUDED_TENDER:
+                tv = str(row_data[tender_col - 1] or "").strip().lower()
+                if tv == EXCLUDED_TENDER:
                     continue
             if item_col_3pl:
-                item_val = str(src.cell(src_row, column=item_col_3pl).value or "").strip().lower()
-                if any(kw in item_val for kw in EXCLUDED_ITEM_KEYWORDS):
+                iv = str(row_data[item_col_3pl - 1] or "").strip().lower()
+                if any(kw in iv for kw in EXCLUDED_ITEM_KEYWORDS):
                     continue
             if uid_col:
-                uid_val = src.cell(src_row, column=uid_col).value
-                if not uid_val:
+                if not row_data[uid_col - 1]:
                     continue
-
-            for col in range(1, src.max_column + 1):
-                src_cell = src.cell(row=src_row, column=col)
-                tgt_cell = sheet_3pl.cell(row=write_row, column=col)
-                tgt_cell.value = src_cell.value
-                tgt_cell.fill = copy(src_cell.fill)
-                tgt_cell.number_format = src_cell.number_format
+            for col_idx, (val, fmt) in enumerate(zip(row_data, row_fmts), start=1):
+                cell = sheet_3pl.cell(row=write_row, column=col_idx)
+                cell.value = val
+                cell.fill = fill
+                if fmt:
+                    cell.number_format = fmt
             write_row += 1
+
+    format_header(sheet_3pl, header_row=1)
+    freeze_top_and_filter(sheet_3pl)
+    highlight_rows(sheet_3pl, header_row=1)
+    autofit_columns(sheet_3pl)
 
 
 def build_account_sheets(source, workbook, mapping):
-    """
-    Build separate sheets for Account tender customers:
-    E-Scribers, Empire, Feshaire.
-
-    E-Scribers: all rows where Customer contains escriber AND Tender=Account
-    Empire:     all rows where Customer contains empire AND Tender=Account
-                PLUS auto-generate a 50% discount row after every service row
-                that doesn't already have one
-    Feshaire:   all rows where Customer contains feshaire AND Tender=Account
-
-    Only creates sheet if data exists. Row color matches service type.
-    """
-
     ACCOUNT_CUSTOMERS = [
         ("E-Scribers", ["e-scriber", "escriber"]),
         ("Empire",     ["empire"]),
         ("Feshaire",   ["feshaire", "fashaire"]),
     ]
-
     EXCLUDED_ITEM_KEYWORDS = ["void"]
 
     item_col     = get_column_index_by_header(source, "Item", 1)
@@ -332,104 +270,93 @@ def build_account_sheets(source, workbook, mapping):
     customer_col = get_column_index_by_header(source, "Customer", 1)
     amount_col   = get_column_index_by_header(source, "Amount", 1)
     regid_col    = get_column_index_by_header(source, "RegID", 1)
+    max_col      = source.max_column
+
+    src_data = []
+    src_formats = []
+    for row in source.iter_rows(min_row=1, max_row=source.max_row, max_col=max_col):
+        src_data.append([c.value for c in row])
+        src_formats.append([c.number_format for c in row])
 
     def get_service_fill(item_val):
         item_lower = item_val.lower()
         for sheet_name, keyword, fill, excludes in mapping:
             if keyword.lower() in item_lower and not any(ex in item_lower for ex in excludes):
                 return fill
-        return FILL_LIGHT_GREEN  # default green if no service match
+        return FILL_LIGHT_GREEN
 
     for sheet_name, customer_keywords in ACCOUNT_CUSTOMERS:
-
         is_empire = (sheet_name == "Empire")
 
-        # --- Collect all matching rows from source by customer name + Account tender ---
-        matching_rows = []
-        for row in range(2, source.max_row + 1):
-            tender_val   = str(source.cell(row=row, column=tender_col).value or "").strip().lower()
-            customer_val = str(source.cell(row=row, column=customer_col).value or "").lower()
-            item_val     = str(source.cell(row=row, column=item_col).value or "").lower()
+        matching_indices = []
+        for idx in range(1, len(src_data)):
+            row_data = src_data[idx]
+            tender_val   = str(row_data[tender_col - 1] or "").strip().lower()
+            customer_val = str(row_data[customer_col - 1] or "").lower()
+            item_val     = str(row_data[item_col - 1] or "").lower()
 
-            # Must be Account tender
             if tender_val != "account":
                 continue
-            # Must match customer — purely by customer name, regardless of RegID
             if not any(kw in customer_val for kw in customer_keywords):
                 continue
-            # Exclude void
             if any(kw in item_val for kw in EXCLUDED_ITEM_KEYWORDS):
                 continue
+            matching_indices.append(idx)
 
-            matching_rows.append(row)
-
-        if not matching_rows:
+        if not matching_indices:
             continue
 
-        # Delete and recreate clean
         if sheet_name in workbook.sheetnames:
             del workbook[sheet_name]
         ws = workbook.create_sheet(sheet_name)
 
-        # Copy headers
-        for col in range(1, source.max_column + 1):
-            ws.cell(row=1, column=col).value = source.cell(row=1, column=col).value
-
-        format_header(ws, header_row=1)
-        freeze_top_and_filter(ws)
-        highlight_rows(ws, header_row=1)
-        autofit_columns(ws)
+        for col_idx, val in enumerate(src_data[0], start=1):
+            ws.cell(row=1, column=col_idx).value = val
 
         write_row = 2
-
-        # --- Write rows ---
-        # For Empire: after each non-discount service row, ensure a 50% discount row follows
         i = 0
-        while i < len(matching_rows):
-            src_row = matching_rows[i]
-            item_val     = str(source.cell(src_row, column=item_col).value or "")
-            item_lower   = item_val.lower()
-            amount_val   = source.cell(src_row, column=amount_col).value
-            row_fill     = get_service_fill(item_val)
+        while i < len(matching_indices):
+            src_idx = matching_indices[i]
+            row_data = src_data[src_idx]
+            row_fmts = src_formats[src_idx]
+            item_val   = str(row_data[item_col - 1] or "")
+            item_lower = item_val.lower()
+            amount_val = row_data[amount_col - 1]
+            row_fill   = get_service_fill(item_val)
 
-            # Write the current row
-            for col in range(1, source.max_column + 1):
-                src_cell = source.cell(row=src_row, column=col)
-                tgt_cell = ws.cell(row=write_row, column=col)
-                tgt_cell.value = src_cell.value
-                tgt_cell.number_format = src_cell.number_format
+            for col_idx, (val, fmt) in enumerate(zip(row_data, row_fmts), start=1):
+                tgt_cell = ws.cell(row=write_row, column=col_idx)
+                tgt_cell.value = val
+                if fmt:
+                    tgt_cell.number_format = fmt
                 tgt_cell.fill = row_fill
             write_row += 1
 
             if is_empire:
-                # Check if this is a service row (not already a discount/coupon row)
                 is_service_row = (
                     "discount" not in item_lower and
                     "coupon" not in item_lower and
                     "void" not in item_lower
                 )
-
                 if is_service_row:
-                    # Check if next row in matching_rows is already a discount for same RegID
-                    regid = source.cell(src_row, column=regid_col).value
+                    regid = row_data[regid_col - 1]
                     next_is_discount = False
-                    if i + 1 < len(matching_rows):
-                        next_src_row = matching_rows[i + 1]
-                        next_item = str(source.cell(next_src_row, column=item_col).value or "").lower()
-                        next_regid = source.cell(next_src_row, column=regid_col).value
+                    if i + 1 < len(matching_indices):
+                        next_src_idx = matching_indices[i + 1]
+                        next_data = src_data[next_src_idx]
+                        next_item = str(next_data[item_col - 1] or "").lower()
+                        next_regid = next_data[regid_col - 1]
                         if next_regid == regid and ("discount" in next_item or "coupon" in next_item):
                             next_is_discount = True
 
                     if not next_is_discount:
-                        # Auto-generate 50% discount row
-                        for col in range(1, source.max_column + 1):
-                            src_cell = source.cell(row=src_row, column=col)
-                            tgt_cell = ws.cell(row=write_row, column=col)
-                            tgt_cell.value = src_cell.value
-                            tgt_cell.number_format = src_cell.number_format
+                        for col_idx, (val, fmt) in enumerate(zip(row_data, row_fmts), start=1):
+                            tgt_cell = ws.cell(row=write_row, column=col_idx)
+                            tgt_cell.value = val
+                            if fmt:
+                                tgt_cell.number_format = fmt
                             tgt_cell.fill = row_fill
-                        # Clear UID, set Item = '50% discount', set Amount = -50%
-                        ws.cell(row=write_row, column=1).value = None  # no UID
+                        ws.cell(row=write_row, column=1).value = None
                         ws.cell(row=write_row, column=item_col).value = "50% discount"
                         if isinstance(amount_val, (int, float)):
                             ws.cell(row=write_row, column=amount_col).value = -abs(amount_val) / 2
@@ -437,13 +364,26 @@ def build_account_sheets(source, workbook, mapping):
 
             i += 1
 
-        # --- Net total row at bottom ---
+        # Net total
         total_row = write_row + 1
-        net_total = 0
-        for r in range(2, write_row):
-            val = ws.cell(row=r, column=amount_col).value
-            if isinstance(val, (int, float)):
-                net_total += val
+        net_total = 0.0
+        for src_idx in matching_indices:
+            v = src_data[src_idx][amount_col - 1]
+            if isinstance(v, (int, float)):
+                net_total += v
+        if is_empire:
+            for src_idx in matching_indices:
+                row_data = src_data[src_idx]
+                item_lower = str(row_data[item_col - 1] or "").lower()
+                is_service_row = (
+                    "discount" not in item_lower and
+                    "coupon" not in item_lower and
+                    "void" not in item_lower
+                )
+                if is_service_row:
+                    amt = row_data[amount_col - 1]
+                    if isinstance(amt, (int, float)):
+                        net_total += -abs(amt) / 2
 
         total_label_col = amount_col - 1 if amount_col > 1 else amount_col
         ws.cell(row=total_row, column=total_label_col).value = "Total:"
@@ -453,64 +393,7 @@ def build_account_sheets(source, workbook, mapping):
         total_cell.font = Font(bold=True)
         total_cell.number_format = '$#,##0.00'
 
-
-def insert_row_above_regid(source_sheet, target_sheet, source_row, target_fill, regid, regid_col):
-    insert_at = None
-    for row in range(2, target_sheet.max_row + 1):
-        if target_sheet.cell(row=row, column=regid_col).value == regid:
-            insert_at = row
-            break
-
-    if insert_at is None:
-        insert_at = target_sheet.max_row + 1
-
-    target_sheet.insert_rows(insert_at)
-
-    for col in range(1, source_sheet.max_column + 1):
-        src_cell = source_sheet.cell(row=source_row, column=col)
-        tgt_cell = target_sheet.cell(row=insert_at, column=col)
-
-        tgt_cell.value = src_cell.value
-        tgt_cell.fill = target_fill
-        tgt_cell.number_format = src_cell.number_format
-
-    return insert_at
-
-
-def insert_row_below_regid(source_sheet, target_sheet, source_row, target_fill, regid, regid_col):
-    insert_at = None
-
-    # Find LAST occurrence of this RegID
-    for row in range(2, target_sheet.max_row + 1):
-        if target_sheet.cell(row=row, column=regid_col).value == regid:
-            insert_at = row
-
-    if insert_at is None:
-        insert_at = target_sheet.max_row + 1
-    else:
-        insert_at += 1  # 👈 insert BELOW
-
-    target_sheet.insert_rows(insert_at)
-
-    for col in range(1, source_sheet.max_column + 1):
-        src_cell = source_sheet.cell(row=source_row, column=col)
-        tgt_cell = target_sheet.cell(row=insert_at, column=col)
-
-        tgt_cell.value = src_cell.value
-        tgt_cell.fill = target_fill
-        tgt_cell.number_format = src_cell.number_format
-
-
-def copy_headers(src, tgt):
-    for col in range(1, src.max_column + 1):
-        tgt.cell(row=1, column=col).value = src.cell(row=1, column=col).value
-
-
-def copy_row_with_fill(src, tgt, src_row, tgt_row, fill):
-    for col in range(1, src.max_column + 1):
-        src_cell = src.cell(row=src_row, column=col)
-        tgt_cell = tgt.cell(row=tgt_row, column=col)
-
-        tgt_cell.value = src_cell.value
-        tgt_cell.number_format = src_cell.number_format  # 🔥 key fix
-        tgt_cell.fill = fill
+        format_header(ws, header_row=1)
+        freeze_top_and_filter(ws)
+        highlight_rows(ws, header_row=1)
+        autofit_columns(ws)

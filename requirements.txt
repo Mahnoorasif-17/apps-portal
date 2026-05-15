@@ -7,3 +7,4 @@ xlsxwriter
 requests
 numpy
 pyarrow
+python-dateutil
