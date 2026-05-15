@@ -55,9 +55,14 @@ def process_step_5(workbook):
         is_regular_saved = "regular" in item_val and "saved" in item_val
  
         # Tip transactions
-        is_tip = "tip" in item_val
+        is_tip = "tip" in item_val  
  
-        if is_zero_amount or is_petty_cash or is_void or is_regular_saved or is_tip:
+        is_food_water     = "food" in item_val or "water" in item_val
+        is_donation       = "donation" in item_val
+        is_petty_pretty   = "petty pretty" in item_val
+
+        if (is_zero_amount or is_petty_cash or is_void or is_regular_saved
+                or is_tip or is_food_water or is_donation or is_petty_pretty):
             color_row(step5, row, FILL_PURPLE)
             purple_rows.add(row)
  
