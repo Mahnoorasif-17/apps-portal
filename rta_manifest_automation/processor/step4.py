@@ -185,7 +185,7 @@ def distribute_items_to_sheets(source, workbook):
             write_row += 1
         format_header(target, header_row=1)
         freeze_top_and_filter(target)
-        highlight_rows(target, header_row=1)
+        highlight_header_row(target, header_row=1)   # ← was highlight_rows
         autofit_columns(target)
 
     build_3pl_sheet(workbook, service_sheets)
@@ -253,7 +253,7 @@ def build_3pl_sheet(workbook, service_sheets):
 
     format_header(sheet_3pl, header_row=1)
     freeze_top_and_filter(sheet_3pl)
-    highlight_rows(sheet_3pl, header_row=1)
+    highlight_header_row(sheet_3pl, header_row=1)   # ← was highlight_rows
     autofit_columns(sheet_3pl)
 
 
@@ -395,5 +395,5 @@ def build_account_sheets(source, workbook, mapping):
 
         format_header(ws, header_row=1)
         freeze_top_and_filter(ws)
-        highlight_rows(ws, header_row=1)
+        highlight_header_row(ws, header_row=1)   # ← was highlight_rows
         autofit_columns(ws)

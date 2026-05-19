@@ -29,10 +29,10 @@ def process_step_5(workbook):
     rows_data = []
     for row_cells in step5.iter_rows(min_row=1, max_row=step5.max_row, max_col=max_col):
         rows_data.append([c.value for c in row_cells])
-    max_row = len(rows_data)  # includes header at index 0
+    max_row = len(rows_data)
     print(f"  [Step5] loaded {max_row} rows in {time.time()-t:.2f}s")
 
-    # --- Fix UID number format (only cells that have values) ---
+    # --- Fix UID number format ---
     t = time.time()
     for r_idx in range(1, max_row):
         v = rows_data[r_idx][uid_col - 1]
@@ -51,7 +51,6 @@ def process_step_5(workbook):
                               "includes", "free month", "late fee"]
     MAILBOX_EXCLUSION_KEYWORDS = ["manila", "envelope", "bubble"]
 
-    # Additional items that should be treated as purple (negative/expense items)
     EXTRA_PURPLE_KEYWORDS = [
         "coupon", "return", "home depot", "masks black", "error",
         "saran wrap", "lunch", "pay out", "advance", "plumbing",
@@ -62,7 +61,7 @@ def process_step_5(workbook):
     t = time.time()
     purple_rows    = set()
     mailbox_regids = set()
-    row_color = {}  # sheet_row -> fill
+    row_color = {}
 
     for r_idx in range(1, max_row):
         row_data = rows_data[r_idx]
@@ -101,7 +100,7 @@ def process_step_5(workbook):
             mailbox_regids.add(regid)
     print(f"  [Step5] classification pass: {time.time()-t:.2f}s")
 
-    # --- E-Scribers blue (skip purple rows) ---
+    # --- E-Scribers blue ---
     t = time.time()
     for r_idx in range(1, max_row):
         sheet_row = r_idx + 1
@@ -112,7 +111,7 @@ def process_step_5(workbook):
             row_color[sheet_row] = FILL_BLUE
     print(f"  [Step5] escriber pass: {time.time()-t:.2f}s")
 
-    # --- Build regid -> sheet_rows map ---
+    # --- regid -> sheet_rows map ---
     t = time.time()
     regid_rows = defaultdict(list)
     for r_idx in range(1, max_row):
@@ -154,7 +153,7 @@ def process_step_5(workbook):
     mailbox_rows.sort()
     print(f"  [Step5] mailbox rows ({len(mailbox_rows)} found): {time.time()-t:.2f}s")
 
-    # --- Apply all colors in ONE pass at the end ---
+    # --- Apply colors ---
     t = time.time()
     for sheet_row, fill in row_color.items():
         for c in range(1, max_col + 1):
@@ -173,7 +172,7 @@ def process_step_5(workbook):
     step5.column_dimensions[helper_col_letter].hidden = True
     print(f"  [Step5] helper column: {time.time()-t:.2f}s")
 
-    # --- Build downstream sheets using in-memory data ---
+    # --- Build downstream sheets ---
     t = time.time()
     _copy_rows_to_tab_fast(rows_data, workbook, "Mailbox", mailbox_rows, max_col, exclude_col=helper_col)
     print(f"  [Step5] Mailbox tab: {time.time()-t:.2f}s")
@@ -224,7 +223,7 @@ def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, ma
         write_row += 1
 
     freeze_top_and_filter(ws)
-    highlight_rows(ws, header_row=1)
+    highlight_header_row(ws, header_row=1)   # ← was highlight_rows
     autofit_columns(ws)
 
 
@@ -296,7 +295,7 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(13)}1"
-    highlight_rows(ws, header_row=1)
+    highlight_header_row(ws, header_row=1)   # ← was highlight_rows
 
     def extract_mailbox_number(item_text):
         if not item_text:

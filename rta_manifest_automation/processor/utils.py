@@ -125,18 +125,12 @@ def format_header(sheet, header_row=7):
 # ⚡ CHANGED: no longer scans all rows in reverse to find last row
 
 def highlight_rows(sheet, header_row=7):
-
+    """
+    Now only colors the header row gray — no longer touches the last row.
+    """
     max_col = sheet.max_column
-
     for col in range(1, max_col + 1):
-
         sheet.cell(row=header_row, column=col).fill = GRAY_FILL
-
-    last_row = sheet.max_row
-
-    for col in range(1, max_col + 1):
-
-        sheet.cell(row=last_row, column=col).fill = GRAY_FILL
 
 
 
