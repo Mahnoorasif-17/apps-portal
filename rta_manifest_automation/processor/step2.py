@@ -66,13 +66,11 @@ def validate_totals(sheet, footer_row, col_totals):
                     "(", "-").replace(")", "").replace("$", "").replace(",", "")
                 footer_float = float(clean)
                 if round(calc_val, 2) != round(footer_float, 2):
-                    # --- WARN ONLY, don't crash ---
                     print(
                         f"Warning: Mismatch in '{header}': "
                         f"calculated={calc_val:.2f}, footer={footer_float:.2f}"
                     )
             except Exception:
-                # --- SKIP unparseable footer values, don't crash ---
                 print(f"Warning: Could not parse footer value for '{header}': {footer_val}")
 
 
@@ -94,7 +92,15 @@ def adjust_amount_total_with_deductions(sheet, mech_row):
                 highlight_row(sheet, row, sheet.max_column, ORANGE_FILL)
 
     # Step 2: Adjust Amount if Item contains keyword (unless it says VOID)
-    keywords = ["discount", "coupon", "petty"]
+    keywords = [
+        # Original keywords
+        "discount", "coupon", "petty",
+        # New items that should be negative
+        "return", "tip", "home depot", "masks black", "error",
+        "saran wrap", "lunch", "pay out", "advance", "plumbing",
+        "window cleaner", "window washer", "lundh", "pathe", "luis",
+        "skyler", "dolly", "chinese"
+    ]
     for row in range(2, mech_row):
         item = sheet.cell(row=row, column=col_item).value
         if isinstance(item, str):
@@ -144,7 +150,6 @@ def finalize_adjusted_total_validation(sheet, mech_row):
                column=amount_col).number_format = numbers.FORMAT_CURRENCY_USD_SIMPLE
 
     if round(amount_sum, 2) != round(subtotal_sum, 2):
-        # --- WARN ONLY, don't crash ---
         print(
             f"Warning: Amount sum ({amount_sum:.2f}) != SubTotal sum ({subtotal_sum:.2f}). "
             f"Continuing anyway."

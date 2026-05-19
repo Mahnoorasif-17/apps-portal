@@ -16,12 +16,33 @@ def process_step_4(workbook):
     remove_columns_by_header(step4, ["SubTotal", "Tax", "Total", "User"])
     drop_rows_with_empty_item(step4)
     remove_footer_and_mech_rows(step4)
+    remove_mechanical_totals_row(step4)   # ← NEW: explicitly remove Mechanical Totals & Difference rows
     clear_all_highlighting(step4)
     format_header(step4, header_row=1)
     highlight_header_row(step4, header_row=1)
     autofit_columns(step4)
     add_uid_column(step4)
     distribute_items_to_sheets(step4, workbook)
+
+
+def remove_mechanical_totals_row(sheet):
+    """
+    Explicitly find and remove any row containing 'Mechanical Totals' or 'Difference'.
+    These rows come from Step 2 and should not appear in Step 4 onwards.
+    """
+    rows_to_delete = []
+    for row_cells in sheet.iter_rows(min_row=1, max_row=sheet.max_row, max_col=sheet.max_column):
+        for cell in row_cells:
+            val = cell.value
+            if isinstance(val, str):
+                vl = val.strip().lower()
+                if "mechanical total" in vl or vl == "difference":
+                    rows_to_delete.append(row_cells[0].row)
+                    break
+
+    # Delete bottom-up to avoid index shifting
+    for row_num in sorted(rows_to_delete, reverse=True):
+        sheet.delete_rows(row_num, 1)
 
 
 def add_uid_column(sheet):
@@ -185,7 +206,7 @@ def distribute_items_to_sheets(source, workbook):
             write_row += 1
         format_header(target, header_row=1)
         freeze_top_and_filter(target)
-        highlight_header_row(target, header_row=1)   # ← was highlight_rows
+        highlight_header_row(target, header_row=1)
         autofit_columns(target)
 
     build_3pl_sheet(workbook, service_sheets)
@@ -253,7 +274,7 @@ def build_3pl_sheet(workbook, service_sheets):
 
     format_header(sheet_3pl, header_row=1)
     freeze_top_and_filter(sheet_3pl)
-    highlight_header_row(sheet_3pl, header_row=1)   # ← was highlight_rows
+    highlight_header_row(sheet_3pl, header_row=1)
     autofit_columns(sheet_3pl)
 
 
@@ -395,5 +416,5 @@ def build_account_sheets(source, workbook, mapping):
 
         format_header(ws, header_row=1)
         freeze_top_and_filter(ws)
-        highlight_header_row(ws, header_row=1)   # ← was highlight_rows
+        highlight_header_row(ws, header_row=1)
         autofit_columns(ws)

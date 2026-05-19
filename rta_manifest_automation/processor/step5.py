@@ -32,6 +32,28 @@ def process_step_5(workbook):
     max_row = len(rows_data)
     print(f"  [Step5] loaded {max_row} rows in {time.time()-t:.2f}s")
 
+    # --- Collect UIDs already in service sheets (DHL/USPS/FedEx/UPS) ---
+    # These rows should NOT be marked purple — they're already handled by service sheets.
+    SERVICE_SHEET_NAMES = ["DHL", "USPS", "FedEx", "UPS"]
+    used_uids = set()
+    for sname in SERVICE_SHEET_NAMES:
+        if sname not in workbook.sheetnames:
+            continue
+        svc = workbook[sname]
+        svc_uid_col = None
+        for col in range(1, svc.max_column + 1):
+            if str(svc.cell(row=1, column=col).value or "").strip().lower() == "uid":
+                svc_uid_col = col
+                break
+        if svc_uid_col is None:
+            continue
+        for row_cells in svc.iter_rows(min_row=2, max_row=svc.max_row,
+                                        min_col=svc_uid_col, max_col=svc_uid_col):
+            v = row_cells[0].value
+            if v:
+                used_uids.add(v)
+    print(f"  [Step5] found {len(used_uids)} UIDs already in service sheets")
+
     # --- Fix UID number format ---
     t = time.time()
     for r_idx in range(1, max_row):
@@ -52,11 +74,20 @@ def process_step_5(workbook):
     MAILBOX_EXCLUSION_KEYWORDS = ["manila", "envelope", "bubble"]
 
     EXTRA_PURPLE_KEYWORDS = [
-        "coupon", "return", "home depot", "masks black", "error",
+        "discount", "coupon", "return", "home depot", "masks black", "error",
         "saran wrap", "lunch", "pay out", "advance", "plumbing",
         "window cleaner", "window washer", "lundh", "pathe", "luis",
         "skyler", "dolly", "chinese"
     ]
+
+    # --- Pre-build: how many rows share each RegID (for fast sibling check) ---
+    t = time.time()
+    regid_count = defaultdict(int)
+    for r_idx in range(1, max_row):
+        rid = rows_data[r_idx][regid_col - 1]
+        if rid:
+            regid_count[rid] += 1
+    print(f"  [Step5] regid count map: {time.time()-t:.2f}s")
 
     t = time.time()
     purple_rows    = set()
@@ -71,6 +102,10 @@ def process_step_5(workbook):
         amount_val = row_data[amount_col - 1]
         regid      = row_data[regid_col - 1]
 
+        # Skip Mechanical Totals safety net
+        if "mechanical total" in item_val:
+            continue
+
         # Purple check
         if not any(kw in item_val for kw in MAILBOX_ONLY_KEYWORDS):
             is_zero_amount   = (amount_val == 0 or amount_val == 0.0)
@@ -83,9 +118,30 @@ def process_step_5(workbook):
             is_petty_pretty  = "petty pretty" in item_val
             is_extra_purple  = any(kw in item_val for kw in EXTRA_PURPLE_KEYWORDS)
 
-            if (is_zero_amount or is_petty_cash or is_void or is_regular_saved
-                    or is_tip or is_food_water or is_donation or is_petty_pretty
-                    or is_extra_purple):
+            should_be_purple = (
+                is_zero_amount or is_petty_cash or is_void or is_regular_saved
+                or is_tip or is_food_water or is_donation or is_petty_pretty
+                or is_extra_purple
+            )
+
+            # If this UID was already pulled into a service sheet (DHL/USPS/FedEx/UPS),
+            # don't mark it purple — it's already handled there.
+            row_uid = row_data[uid_col - 1]
+            if should_be_purple and row_uid and row_uid in used_uids:
+                should_be_purple = False
+
+            # If this is a coupon/discount/return and there's another row with the
+            # same RegID (i.e., paired with a real item like a retail product),
+            # it's a paired discount, not a standalone purple entry. Skip it.
+            is_paired_keyword = (
+                "coupon" in item_val or
+                "discount" in item_val or
+                "return" in item_val
+            )
+            if should_be_purple and is_paired_keyword and regid and regid_count.get(regid, 0) > 1:
+                should_be_purple = False
+
+            if should_be_purple:
                 purple_rows.add(sheet_row)
                 row_color[sheet_row] = FILL_PURPLE
 
@@ -223,13 +279,19 @@ def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, ma
         write_row += 1
 
     freeze_top_and_filter(ws)
-    highlight_header_row(ws, header_row=1)   # ← was highlight_rows
+    highlight_header_row(ws, header_row=1)
     autofit_columns(ws)
 
 
 def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
                                        item_col, regid_col, uid_col, customer_col,
                                        amount_col, date_col, time_col, tender_col):
+    """
+    Writes purple rows to Void-Discount-Coupons tab.
+    Filtering already happened during classification in process_step_5:
+      - Rows whose UID is in a service sheet are excluded
+      - Coupon/discount/return rows that share a RegID with another row are excluded
+    """
     TAB_NAME = "Void-Discount-Coupons"
     if TAB_NAME in workbook.sheetnames:
         del workbook[TAB_NAME]
@@ -256,6 +318,12 @@ def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
     write_row = 2
     for sheet_row in sorted(purple_rows):
         src = rows_data[sheet_row - 1]
+
+        # Safety: skip Mechanical Totals if any slipped through
+        item_check = str(src[item_col - 1] or "").lower()
+        if "mechanical total" in item_check:
+            continue
+
         for out_col, src_col in col_map.items():
             cell = ws.cell(row=write_row, column=out_col)
             cell.value = src[src_col - 1]
@@ -295,7 +363,7 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(13)}1"
-    highlight_header_row(ws, header_row=1)   # ← was highlight_rows
+    highlight_header_row(ws, header_row=1)
 
     def extract_mailbox_number(item_text):
         if not item_text:

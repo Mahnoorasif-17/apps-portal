@@ -41,12 +41,18 @@ def process_step_6(workbook):
 
     TAX_RATE = 0.08875
 
-    # Now also excludes shipping services (was previously skipped via fill color)
+    # Excludes shipping services (was previously skipped via fill color)
     EXCLUDE_KEYWORDS = [
         "coupon", "discount", "void", "term",
         "late fee", "mailbox", "setup fee", "renew",
         "ups", "usps", "fedex", "dhl",           # shipping services
         "declared value",                         # paired with shipping
+    ]
+
+    # Special-case items: bypass EXCLUDE_KEYWORDS and go into Step 6 / Retail
+    # (e.g., DHL DROP OFF is retail, not a shipping service)
+    INCLUDE_OVERRIDES = [
+        "dhl drop off",
     ]
 
     TAXABLE_KEYWORDS = [
@@ -95,12 +101,19 @@ def process_step_6(workbook):
         if item_clean == "" and amount == 0:
             continue
 
-        # Skip colored rows (still works for purple/green/blue from in-memory Step 5)
+        # Skip colored rows (purple/green/blue from Step 5)
         if not rows_no_fill[r_idx]:
             continue
 
-        # Skip excluded keywords (now includes shipping carriers as a safety net)
-        if any(k in item_clean for k in EXCLUDE_KEYWORDS):
+        # Check INCLUDE_OVERRIDES first — these bypass EXCLUDE_KEYWORDS
+        is_override = any(ov in item_clean for ov in INCLUDE_OVERRIDES)
+
+        # Skip excluded keywords (unless it's an override item like DHL DROP OFF)
+        if not is_override and any(k in item_clean for k in EXCLUDE_KEYWORDS):
+            continue
+
+        # Safety: skip Mechanical Totals if any slipped through
+        if "mechanical total" in item_clean:
             continue
 
         # Tax
