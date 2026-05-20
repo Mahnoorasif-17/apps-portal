@@ -387,24 +387,12 @@ def build_account_sheets(source, workbook, mapping):
 
         # Net total
         total_row = write_row + 1
+        # Net total — sum directly from written rows (includes auto-generated 50% discounts)
         net_total = 0.0
-        for src_idx in matching_indices:
-            v = src_data[src_idx][amount_col - 1]
-            if isinstance(v, (int, float)):
-                net_total += v
-        if is_empire:
-            for src_idx in matching_indices:
-                row_data = src_data[src_idx]
-                item_lower = str(row_data[item_col - 1] or "").lower()
-                is_service_row = (
-                    "discount" not in item_lower and
-                    "coupon" not in item_lower and
-                    "void" not in item_lower
-                )
-                if is_service_row:
-                    amt = row_data[amount_col - 1]
-                    if isinstance(amt, (int, float)):
-                        net_total += -abs(amt) / 2
+        for r in range(2, write_row):
+            val = ws.cell(row=r, column=amount_col).value
+            if isinstance(val, (int, float)):
+                net_total += val
 
         total_label_col = amount_col - 1 if amount_col > 1 else amount_col
         ws.cell(row=total_row, column=total_label_col).value = "Total:"
