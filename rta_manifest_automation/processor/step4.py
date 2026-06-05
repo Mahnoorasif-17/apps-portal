@@ -216,7 +216,7 @@ def distribute_items_to_sheets(source, workbook):
 def build_3pl_sheet(workbook, service_sheets):
     SERVICE_ORDER = ["DHL", "USPS", "FedEx", "UPS"]
     EXCLUDED_TENDER = "account"
-    EXCLUDED_ITEM_KEYWORDS = ["void", "discount"]
+    EXCLUDED_ITEM_KEYWORDS = ["void"]
 
     if "3PL" in workbook.sheetnames:
         del workbook["3PL"]
