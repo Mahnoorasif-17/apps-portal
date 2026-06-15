@@ -109,7 +109,7 @@ def process_step_5(workbook):
         # Purple check
         if not any(kw in item_val for kw in MAILBOX_ONLY_KEYWORDS):
             is_zero_amount   = (amount_val == 0 or amount_val == 0.0)
-            is_petty_cash    = "petty cash" in item_val or "petty cahs" in item_val
+            is_petty_cash    = "petty cash" in item_val or "petty cahs" in item_val or "pettycash" in item_val
             is_void          = "void" in item_val
             is_regular_saved = "regular" in item_val and "saved" in item_val
             is_tip           = "tip" in item_val
