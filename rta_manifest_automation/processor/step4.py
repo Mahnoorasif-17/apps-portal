@@ -167,17 +167,27 @@ def distribute_items_to_sheets(source, workbook):
         service_sheets[sheet_name]["rows_buffer"].append((row_data, row_fmts))
 
         # Existing discount/coupon
+       # Existing discount/coupon — keep grabbing consecutive ones tied to same RegID
         has_existing_discount = False
-        if next_idx < len(src_data):
-            next_data = src_data[next_idx]
-            next_fmts = src_formats[next_idx]
-            next_item = str(next_data[item_col - 1] or "").lower()
-            next_regid = next_data[regid_col - 1]
-            if (next_regid == regid and
-                ("discount" in next_item or "coupon" in next_item) and
-                "void" not in next_item):
-                service_sheets[sheet_name]["rows_buffer"].append((next_data, next_fmts))
-                has_existing_discount = True
+        scan_idx = next_idx
+        while scan_idx < len(src_data):
+            scan_data = src_data[scan_idx]
+            scan_fmts = src_formats[scan_idx]
+            scan_item = str(scan_data[item_col - 1] or "").lower()
+            scan_regid = scan_data[regid_col - 1]
+
+            # Must be same RegID
+            if scan_regid != regid:
+                break
+
+            # Must be discount/coupon (and not void)
+            if not (("discount" in scan_item or "coupon" in scan_item) and "void" not in scan_item):
+                break
+
+            # Append and continue scanning
+            service_sheets[sheet_name]["rows_buffer"].append((scan_data, scan_fmts))
+            has_existing_discount = True
+            scan_idx += 1
 
         # Empire 50% discount
         if customer.strip().lower() == "empire merchants chelsea" and not has_existing_discount:
