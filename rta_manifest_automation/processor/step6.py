@@ -61,6 +61,9 @@ def process_step_6(workbook):
         "printing", "scan", "office rental"
     ]
 
+    # Keywords that identify a coupon/discount row
+    COUPON_DISCOUNT_KEYWORDS = ["coupon", "discount"]
+
     def is_no_fill_from_cell(cell):
         fill = cell.fill
         if fill is None:
@@ -89,6 +92,10 @@ def process_step_6(workbook):
     total_tax    = 0.0
     total_total  = 0.0
 
+    # Tracks whether the last accepted (non-coupon/discount) item was a retail item.
+    # If True, any immediately following coupon/discount rows are included.
+    last_item_was_retail = False
+
     t = time.time()
     for r_idx in range(1, len(rows_values)):
         row_vals = rows_values[r_idx]
@@ -105,15 +112,45 @@ def process_step_6(workbook):
         if not rows_no_fill[r_idx]:
             continue
 
+        # Detect if this row is a coupon/discount row
+        is_coupon_discount = any(k in item_clean for k in COUPON_DISCOUNT_KEYWORDS)
+
+        if is_coupon_discount:
+            # Only include if the last accepted non-coupon item was a retail item
+            if last_item_was_retail:
+                row_data = []
+                for c in range(1, 11):
+                    if c <= len(row_vals):
+                        row_data.append(row_vals[c - 1])
+                    else:
+                        row_data.append(None)
+
+                row_data[7] = amount   # coupon amounts are already negative
+                row_data[8] = 0.0     # no tax on coupons/discounts
+                row_data[9] = amount  # total = amount (negative)
+
+                processed_rows.append((item_clean, row_data, "n"))
+
+                total_amount += amount
+                total_tax    += 0.0
+                total_total  += amount
+            # Either way, do NOT update last_item_was_retail — keep it as-is
+            # so multiple consecutive coupons after a retail item are all included
+            continue
+
+        # --- Non-coupon/discount row from here ---
+
         # Check INCLUDE_OVERRIDES first — these bypass EXCLUDE_KEYWORDS
         is_override = any(ov in item_clean for ov in INCLUDE_OVERRIDES)
 
         # Skip excluded keywords (unless it's an override item like DHL DROP OFF)
         if not is_override and any(k in item_clean for k in EXCLUDE_KEYWORDS):
+            last_item_was_retail = False  # excluded item resets the flag
             continue
 
         # Safety: skip Mechanical Totals if any slipped through
         if "mechanical total" in item_clean:
+            last_item_was_retail = False
             continue
 
         # Tax
@@ -138,6 +175,10 @@ def process_step_6(workbook):
         total_amount += amount
         total_tax    += tax
         total_total  += total
+
+        # This was a retail item — coupons immediately following it should be included
+        last_item_was_retail = True
+
     print(f"  [Step6] processed {len(processed_rows)} rows in {time.time()-t:.2f}s")
 
     processed_rows.sort(key=lambda x: x[0])
