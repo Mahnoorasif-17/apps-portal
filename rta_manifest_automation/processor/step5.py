@@ -1,5 +1,6 @@
 import time
 import re
+import math
 from copy import copy
 from collections import defaultdict
 from openpyxl.styles import PatternFill, Font, Alignment
@@ -33,7 +34,6 @@ def process_step_5(workbook):
     print(f"  [Step5] loaded {max_row} rows in {time.time()-t:.2f}s")
 
     # --- Collect UIDs already in service sheets (DHL/USPS/FedEx/UPS) ---
-    # These rows should NOT be marked purple — they're already handled by service sheets.
     SERVICE_SHEET_NAMES = ["DHL", "USPS", "FedEx", "UPS"]
     used_uids = set()
     for sname in SERVICE_SHEET_NAMES:
@@ -80,7 +80,7 @@ def process_step_5(workbook):
         "skyler", "dolly", "chinese"
     ]
 
-    # --- Pre-build: how many rows share each RegID (for fast sibling check) ---
+    # --- Pre-build: how many rows share each RegID ---
     t = time.time()
     regid_count = defaultdict(int)
     for r_idx in range(1, max_row):
@@ -102,11 +102,9 @@ def process_step_5(workbook):
         amount_val = row_data[amount_col - 1]
         regid      = row_data[regid_col - 1]
 
-        # Skip Mechanical Totals safety net
         if "mechanical total" in item_val:
             continue
 
-        # Purple check
         if not any(kw in item_val for kw in MAILBOX_ONLY_KEYWORDS):
             is_zero_amount   = (amount_val == 0 or amount_val == 0.0)
             is_petty_cash    = "petty cash" in item_val or "petty cahs" in item_val or "pettycash" in item_val
@@ -124,15 +122,10 @@ def process_step_5(workbook):
                 or is_extra_purple
             )
 
-            # If this UID was already pulled into a service sheet (DHL/USPS/FedEx/UPS),
-            # don't mark it purple — it's already handled there.
             row_uid = row_data[uid_col - 1]
             if should_be_purple and row_uid and row_uid in used_uids:
                 should_be_purple = False
 
-            # If this is a coupon/discount/return and there's another row with the
-            # same RegID (i.e., paired with a real item like a retail product),
-            # it's a paired discount, not a standalone purple entry. Skip it.
             is_paired_keyword = (
                 "coupon" in item_val or
                 "discount" in item_val or
@@ -145,7 +138,6 @@ def process_step_5(workbook):
                 purple_rows.add(sheet_row)
                 row_color[sheet_row] = FILL_PURPLE
 
-        # Mailbox RegID collection
         is_mailbox_item = (
             any(kw in item_val for kw in MAILBOX_KEYWORDS) or
             any(kw in item_val for kw in RENEW_KEYWORDS) or
@@ -263,12 +255,10 @@ def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, ma
 
     cols_to_copy = [c for c in range(1, max_col + 1) if c != exclude_col]
 
-    # Header
     header = rows_data[0]
     for out_col, src_col in enumerate(cols_to_copy, start=1):
         ws.cell(row=1, column=out_col).value = header[src_col - 1]
 
-    # Data rows
     write_row = 2
     for sheet_row in sheet_rows_to_copy:
         src = rows_data[sheet_row - 1]
@@ -286,12 +276,6 @@ def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, ma
 def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
                                        item_col, regid_col, uid_col, customer_col,
                                        amount_col, date_col, time_col, tender_col):
-    """
-    Writes purple rows to Void-Discount-Coupons tab.
-    Filtering already happened during classification in process_step_5:
-      - Rows whose UID is in a service sheet are excluded
-      - Coupon/discount/return rows that share a RegID with another row are excluded
-    """
     TAB_NAME = "Void-Discount-Coupons"
     if TAB_NAME in workbook.sheetnames:
         del workbook[TAB_NAME]
@@ -319,7 +303,6 @@ def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
     for sheet_row in sorted(purple_rows):
         src = rows_data[sheet_row - 1]
 
-        # Safety: skip Mechanical Totals if any slipped through
         item_check = str(src[item_col - 1] or "").lower()
         if "mechanical total" in item_check:
             continue
@@ -385,15 +368,53 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
         il = (item_text or "").strip().lower()
         return il.startswith("term") or "  term" in il or il.startswith("term:")
 
-    # Coupon -> zero tax regids
-    zero_tax_regids = set()
+    # ---- Block detection: a "block" = parent Renew/Setup/Mailbox + its children ----
+    PARENT_KEYWORDS = ["renew", "mailbox", "setup fee", "set up fee"]
+
+    def is_parent_row(item_text):
+        il = (item_text or "").strip().lower()
+        if il.startswith("term") or "  term" in il:
+            return False
+        return any(kw in il for kw in PARENT_KEYWORDS)
+
+    blocks_by_parent = []
+    current_parent = None
+    current_children = []
+
     for sheet_row in mailbox_rows:
         src = rows_data[sheet_row - 1]
-        item_val_scan = str(src[item_col - 1] or "").lower()
-        if "coupon" in item_val_scan:
-            r = src[regid_col - 1]
-            if r:
-                zero_tax_regids.add(r)
+        item_val_scan = str(src[item_col - 1] or "")
+        if is_parent_row(item_val_scan):
+            if current_parent is not None:
+                blocks_by_parent.append((current_parent, current_children))
+            current_parent = sheet_row
+            current_children = []
+        else:
+            if current_parent is not None:
+                current_children.append(sheet_row)
+            else:
+                blocks_by_parent.append((sheet_row, []))
+
+    if current_parent is not None:
+        blocks_by_parent.append((current_parent, current_children))
+
+    # Mark zero-tax rows: any block that contains a coupon
+    zero_tax_rows = set()
+    for parent_row, child_rows in blocks_by_parent:
+        block_all_rows = [parent_row] + child_rows
+        has_coupon = False
+        for r in block_all_rows:
+            src = rows_data[r - 1]
+            item_val_scan = str(src[item_col - 1] or "").lower()
+            if "coupon" in item_val_scan:
+                has_coupon = True
+                break
+        if has_coupon:
+            for r in block_all_rows:
+                zero_tax_rows.add(r)
+
+    # Debug print so you can verify in terminal
+    print(f"  [MailboxWorking] {len(blocks_by_parent)} blocks, {len(zero_tax_rows)} zero-tax rows")
 
     write_row = 2
     last_mbox_row_for_regid = {}
@@ -433,14 +454,29 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
         ws.cell(row=write_row, column=COL_CUSTOMER).value = src[customer_col - 1]
         ws.cell(row=write_row, column=COL_AMOUNT).value   = amount_val
 
-        # Tax
-        if regid_val in zero_tax_regids:
-            ws.cell(row=write_row, column=COL_TAX).value = 0
-        else:
-            ws.cell(row=write_row, column=COL_TAX).value = f"=K{write_row}*8.875%"
+        # --- Tax: COMPUTED in Python (not formula) for reliability ---
+       # --- Tax: COMPUTED in Python with round-half-up (so 37.275 -> 37.28) ---
+        item_val_lower = item_val.lower()
+        is_late_fee = "late fee" in item_val_lower
 
-        # Total
-        ws.cell(row=write_row, column=COL_TOTAL).value = f"=K{write_row}+L{write_row}"
+        if sheet_row in zero_tax_rows or is_late_fee:
+            tax_value = 0.0
+        else:
+            if isinstance(amount_val, (int, float)):
+                # Round HALF UP (not banker's): 37.275 -> 37.28
+                tax_raw = amount_val * 0.08875
+                tax_value = math.floor(tax_raw * 100 + 0.5) / 100
+            else:
+                tax_value = 0.0
+        ws.cell(row=write_row, column=COL_TAX).value = tax_value
+
+        # --- Total: COMPUTED in Python (same rounding) ---
+        if isinstance(amount_val, (int, float)):
+            total_raw = amount_val + tax_value
+            total_value = math.floor(total_raw * 100 + 0.5) / 100 if total_raw >= 0 else -math.floor(-total_raw * 100 + 0.5) / 100
+        else:
+            total_value = tax_value
+        ws.cell(row=write_row, column=COL_TOTAL).value = total_value
 
         # Formats
         ws.cell(row=write_row, column=COL_UID).number_format    = '0'
@@ -455,12 +491,34 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
 
         write_row += 1
 
-    # Totals row
+    # --- Totals row: COMPUTED from written values ---
     last_data_row = write_row - 1
     totals_row = write_row + 1
-    ws.cell(row=totals_row, column=COL_AMOUNT).value = f"=SUM(K2:K{last_data_row})"
-    ws.cell(row=totals_row, column=COL_TAX).value    = f"=SUM(L2:L{last_data_row})"
-    ws.cell(row=totals_row, column=COL_TOTAL).value  = f"=SUM(M2:M{last_data_row})"
+
+    sum_amount = 0.0
+    sum_tax    = 0.0
+    sum_total  = 0.0
+    for r in range(2, write_row):
+        a = ws.cell(row=r, column=COL_AMOUNT).value
+        t = ws.cell(row=r, column=COL_TAX).value
+        tot = ws.cell(row=r, column=COL_TOTAL).value
+        if isinstance(a, (int, float)):
+            sum_amount += a
+        if isinstance(t, (int, float)):
+            sum_tax += t
+        if isinstance(tot, (int, float)):
+            sum_total += tot
+
+    def half_up(val):
+        if val >= 0:
+            return math.floor(val * 100 + 0.5) / 100
+        else:
+            return -math.floor(-val * 100 + 0.5) / 100
+
+    ws.cell(row=totals_row, column=COL_AMOUNT).value = half_up(sum_amount)
+    ws.cell(row=totals_row, column=COL_TAX).value    = half_up(sum_tax)
+    ws.cell(row=totals_row, column=COL_TOTAL).value  = half_up(sum_total)
+
     for c in (COL_AMOUNT, COL_TAX, COL_TOTAL):
         ws.cell(row=totals_row, column=c).number_format = '$#,##0.00'
         ws.cell(row=totals_row, column=c).font = Font(bold=True)
