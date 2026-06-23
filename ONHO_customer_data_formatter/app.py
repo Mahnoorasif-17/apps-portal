@@ -81,6 +81,7 @@ def process_excel(input_file):
     output_df['AddDate'] = df['AddDate'].apply(clean_date)
     output_df['NamePre'] = df['NamePre']
     output_df['FirstName'] = df['FirstName']
+    output_df['MiddleName'] = ''
     output_df['LastName'] = df['LastName']
     output_df['CompanyName'] = df['CompanyName']
     output_df['Address1 (Unmodified)'] = df['Address1']
@@ -99,7 +100,7 @@ def process_excel(input_file):
     
     def phone_to_num(val):
         if pd.isna(val) or str(val).strip() == "": return ""
-        clean = re.sub(r'[\s\-\(\)]+', '', str(val))
+        clean = re.sub(r'[\s\-\(\)\.]+', '', str(val))
         return clean
 
     output_df['VoicePhoneNo'] = df['VoicePhoneNo'].apply(phone_to_num)
