@@ -54,6 +54,7 @@ def process_excel(input_file):
     # Apply the split
     addr_splits = df.apply(split_address_final, axis=1, result_type='expand')
     df['Address1_Mod'] = addr_splits[0].apply(apply_formatting)
+    df['Address1_Mod'] = df['Address1_Mod'].apply(lambda x: re.sub(r'(?<= )[eEwWnNsS](?= )', lambda m: m.group().upper(), x) if isinstance(x, str) else x)
     df['Address2_Mod'] = addr_splits[1].astype(str).str.upper()
     df['Address2_Mod'] = df['Address2_Mod'].replace('NAN', '').replace('NONE', '')
 
