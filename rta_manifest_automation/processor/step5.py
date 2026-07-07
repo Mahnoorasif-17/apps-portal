@@ -191,7 +191,8 @@ def process_step_5(workbook):
                 continue
             is_mailbox_row = any(kw in item_val for kw in MAILBOX_ROW_KEYWORDS)
             is_coupon = "coupon" in item_val
-            if not is_mailbox_row and not is_coupon:
+            is_discount = "discount" in item_val          
+            if not is_mailbox_row and not is_coupon and not is_discount: 
                 continue
             mailbox_rows.append(sheet_row)
             mailbox_row_set.add(sheet_row)
@@ -458,8 +459,9 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
        # --- Tax: COMPUTED in Python with round-half-up (so 37.275 -> 37.28) ---
         item_val_lower = item_val.lower()
         is_late_fee = "late fee" in item_val_lower
+        is_discount = "discount" in item_val_lower 
 
-        if sheet_row in zero_tax_rows or is_late_fee:
+        if sheet_row in zero_tax_rows or is_late_fee or is_discount:
             tax_value = 0.0
         else:
             if isinstance(amount_val, (int, float)):
