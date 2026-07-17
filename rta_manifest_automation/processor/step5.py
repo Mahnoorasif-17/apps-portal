@@ -11,12 +11,16 @@ FILL_PURPLE = PatternFill(start_color="B44CB5", end_color="B44CB5", fill_type="s
 FILL_BLUE   = PatternFill(start_color="FF0099FF", end_color="FF0099FF", fill_type="solid")
 FILL_GREEN  = PatternFill(start_color="FF00CC00", end_color="FF00CC00", fill_type="solid")
 FILL_GRAY   = PatternFill(start_color="FF808080", end_color="FF808080", fill_type="solid")
+DUP_YELLOW = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
 
 
 def process_step_5(workbook):
     t0 = time.time()
     step5 = copy_sheet(workbook, "Step 4", "Step 5")
     print(f"  [Step5] copy_sheet: {time.time()-t0:.2f}s (max_row={step5.max_row})")
+
+    # Re-apply header styling to include any NS columns copied from Step 4
+    highlight_header_row(step5, header_row=1)
 
     item_col     = get_column_index_by_header(step5, "Item", 1)
     customer_col = get_column_index_by_header(step5, "Customer", 1)
@@ -210,6 +214,7 @@ def process_step_5(workbook):
     print(f"  [Step5] apply colors ({len(row_color)} rows): {time.time()-t:.2f}s")
 
     # --- Helper column for filtering ---
+    # --- Helper column for filtering ---
     t = time.time()
     helper_col = max_col + 1
     helper_col_letter = get_column_letter(helper_col)
@@ -217,8 +222,11 @@ def process_step_5(workbook):
     for sheet_row in range(2, max_row + 1):
         step5.cell(row=sheet_row, column=helper_col).value = "PURPLE" if sheet_row in purple_rows else "OTHER"
     step5.freeze_panes = "A2"
+    # Filter range covers ALL columns including NS columns (max_col was set before helper_col added)
     step5.auto_filter.ref = f"A1:{get_column_letter(helper_col)}{max_row}"
     step5.column_dimensions[helper_col_letter].hidden = True
+    # Re-apply gray header to include NS columns
+    highlight_header_row(step5, header_row=1)
     print(f"  [Step5] helper column: {time.time()-t:.2f}s")
 
     # --- Build downstream sheets ---
@@ -277,15 +285,34 @@ def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, ma
 def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
                                        item_col, regid_col, uid_col, customer_col,
                                        amount_col, date_col, time_col, tender_col):
+    """
+    Writes purple rows to Void-Discount-Coupons tab.
+    Now includes 3 NetSuite columns after Amount.
+    """
     TAB_NAME = "Void-Discount-Coupons"
     if TAB_NAME in workbook.sheetnames:
         del workbook[TAB_NAME]
     ws = workbook.create_sheet(TAB_NAME)
 
+    # Find NetSuite columns in source rows_data by header name
+    ns_item_id_src = ns_item_name_src = ns_cust_id_src = None
+    header_row_data = rows_data[0]
+    for idx, val in enumerate(header_row_data):
+        vl = str(val or "").strip().lower()
+        if vl == "item netsuite id":
+            ns_item_id_src = idx + 1  # 1-based
+        elif vl == "item netsuite name":
+            ns_item_name_src = idx + 1
+        elif vl == "customer netsuite id":
+            ns_cust_id_src = idx + 1
+
     COL_UID, COL_REGID, COL_DATE, COL_TIME = 1, 2, 3, 4
     COL_ITEM, COL_TENDER, COL_CUSTOMER, COL_AMOUNT = 5, 6, 7, 8
+    COL_NS_ITEM_ID, COL_NS_ITEM_NAME, COL_NS_CUST_ID = 9, 10, 11
+    TOTAL_COLS = 11
 
-    headers = ["UID", "RegID", "Date", "Time", "Item", "Tender", "Customer", "Amount"]
+    headers = ["UID", "RegID", "Date", "Time", "Item", "Tender", "Customer", "Amount",
+               "Item NetSuite ID", "Item NetSuite Name", "Customer NetSuite ID"]
     for col_idx, header in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col_idx)
         cell.value = header
@@ -294,7 +321,7 @@ def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(8)}1"
+    ws.auto_filter.ref = f"A1:{get_column_letter(TOTAL_COLS)}1"
 
     col_map = {COL_UID: uid_col, COL_REGID: regid_col, COL_DATE: date_col,
                COL_TIME: time_col, COL_ITEM: item_col, COL_TENDER: tender_col,
@@ -304,10 +331,12 @@ def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
     for sheet_row in sorted(purple_rows):
         src = rows_data[sheet_row - 1]
 
+        # Safety: skip Mechanical Totals if any slipped through
         item_check = str(src[item_col - 1] or "").lower()
         if "mechanical total" in item_check:
             continue
 
+        # Write standard columns
         for out_col, src_col in col_map.items():
             cell = ws.cell(row=write_row, column=out_col)
             cell.value = src[src_col - 1]
@@ -321,6 +350,25 @@ def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
                     cell.font = Font(color="FF0000")
             elif out_col == COL_DATE:
                 cell.number_format = 'mm/dd/yyyy'
+
+        # Write NS columns
+        if ns_cust_id_src is not None:
+            cell = ws.cell(row=write_row, column=COL_NS_CUST_ID)
+            cell.value = src[ns_cust_id_src - 1]
+            # If source cell was yellow (duplicate customer), preserve yellow
+            src_cust_id_fill = None
+            # We can't easily read the fill from rows_data (it's just values),
+            # so instead check the source sheet directly
+            src_cell = workbook["Step 5"].cell(row=sheet_row, column=ns_cust_id_src) if "Step 5" in workbook.sheetnames else None
+            if src_cell and src_cell.fill and src_cell.fill.fill_type == "solid":
+                color = src_cell.fill.start_color.rgb if src_cell.fill.start_color else ""
+                if "FFFF00" in str(color).upper():
+                    cell.fill = DUP_YELLOW
+                else:
+                    cell.fill = FILL_PURPLE
+            else:
+                cell.fill = FILL_PURPLE
+
         write_row += 1
 
     autofit_columns(ws)
@@ -334,19 +382,36 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
         del workbook[TAB_NAME]
     ws = workbook.create_sheet(TAB_NAME)
 
+    # Find NetSuite columns in source rows_data by header name
+    ns_item_id_src = ns_item_name_src = ns_cust_id_src = None
+    header_row_data = rows_data[0]
+    for idx, val in enumerate(header_row_data):
+        vl = str(val or "").strip().lower()
+        if vl == "item netsuite id":
+            ns_item_id_src = idx + 1
+        elif vl == "item netsuite name":
+            ns_item_name_src = idx + 1
+        elif vl == "customer netsuite id":
+            ns_cust_id_src = idx + 1
+
     COL_UID, COL_REGID, COL_DATE, COL_TIME = 1, 2, 3, 4
     COL_ITEM, COL_MBOX_NUM, COL_MBOX_TYP = 5, 6, 7
     COL_TENDER, COL_CUSTOMER, COL_AMOUNT, COL_TAX, COL_TOTAL = 9, 10, 11, 12, 13
+    COL_NS_ITEM_ID, COL_NS_ITEM_NAME, COL_NS_CUST_ID = 14, 15, 16
+    TOTAL_COLS = 16
 
     headers = {COL_UID: "UID", COL_REGID: "RegID", COL_DATE: "Date", COL_TIME: "Time",
                COL_ITEM: "Item", COL_MBOX_NUM: "Mailbox #", COL_MBOX_TYP: "Mailbox Type",
                COL_TENDER: "Tender", COL_CUSTOMER: "Customer",
-               COL_AMOUNT: "Amount", COL_TAX: "Tax", COL_TOTAL: "Total Amount"}
+               COL_AMOUNT: "Amount", COL_TAX: "Tax", COL_TOTAL: "Total Amount",
+               COL_NS_ITEM_ID: "Item NetSuite ID",
+               COL_NS_ITEM_NAME: "Item NetSuite Name",
+               COL_NS_CUST_ID: "Customer NetSuite ID"}
     for col, h in headers.items():
         ws.cell(row=1, column=col).value = h
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:{get_column_letter(13)}1"
+    ws.auto_filter.ref = f"A1:{get_column_letter(TOTAL_COLS)}1"
     highlight_header_row(ws, header_row=1)
 
     def extract_mailbox_number(item_text):
@@ -369,7 +434,7 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
         il = (item_text or "").strip().lower()
         return il.startswith("term") or "  term" in il or il.startswith("term:")
 
-    # ---- Block detection: a "block" = parent Renew/Setup/Mailbox + its children ----
+    # ---- Block detection (unchanged) ----
     PARENT_KEYWORDS = ["renew", "mailbox", "setup fee", "set up fee"]
 
     def is_parent_row(item_text):
@@ -395,11 +460,9 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
                 current_children.append(sheet_row)
             else:
                 blocks_by_parent.append((sheet_row, []))
-
     if current_parent is not None:
         blocks_by_parent.append((current_parent, current_children))
 
-    # Mark zero-tax rows: any block that contains a coupon
     zero_tax_rows = set()
     for parent_row, child_rows in blocks_by_parent:
         block_all_rows = [parent_row] + child_rows
@@ -414,8 +477,14 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
             for r in block_all_rows:
                 zero_tax_rows.add(r)
 
-    # Debug print so you can verify in terminal
     print(f"  [MailboxWorking] {len(blocks_by_parent)} blocks, {len(zero_tax_rows)} zero-tax rows")
+
+    import math
+    def half_up(val):
+        if val >= 0:
+            return math.floor(val * 100 + 0.5) / 100
+        else:
+            return -math.floor(-val * 100 + 0.5) / 100
 
     write_row = 2
     last_mbox_row_for_regid = {}
@@ -455,30 +524,42 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
         ws.cell(row=write_row, column=COL_CUSTOMER).value = src[customer_col - 1]
         ws.cell(row=write_row, column=COL_AMOUNT).value   = amount_val
 
-        # --- Tax: COMPUTED in Python (not formula) for reliability ---
-       # --- Tax: COMPUTED in Python with round-half-up (so 37.275 -> 37.28) ---
+        # Tax
+       # Tax — zero out for late fees, coupons, and discounts
         item_val_lower = item_val.lower()
-        is_late_fee = "late fee" in item_val_lower
-        is_discount = "discount" in item_val_lower 
+        is_late_fee     = "late fee" in item_val_lower
+        is_coupon_or_discount = ("coupon" in item_val_lower or "discount" in item_val_lower)
 
-        if sheet_row in zero_tax_rows or is_late_fee or is_discount:
+        if sheet_row in zero_tax_rows or is_late_fee or is_coupon_or_discount:
             tax_value = 0.0
         else:
             if isinstance(amount_val, (int, float)):
-                # Round HALF UP (not banker's): 37.275 -> 37.28
-                tax_raw = amount_val * 0.08875
-                tax_value = math.floor(tax_raw * 100 + 0.5) / 100
+                tax_value = half_up(amount_val * 0.08875)
             else:
                 tax_value = 0.0
         ws.cell(row=write_row, column=COL_TAX).value = tax_value
 
-        # --- Total: COMPUTED in Python (same rounding) ---
+        # Total
         if isinstance(amount_val, (int, float)):
-            total_raw = amount_val + tax_value
-            total_value = math.floor(total_raw * 100 + 0.5) / 100 if total_raw >= 0 else -math.floor(-total_raw * 100 + 0.5) / 100
+            total_value = half_up(amount_val + tax_value)
         else:
             total_value = tax_value
         ws.cell(row=write_row, column=COL_TOTAL).value = total_value
+
+        # NS columns
+        if ns_item_id_src is not None:
+            ws.cell(row=write_row, column=COL_NS_ITEM_ID).value = src[ns_item_id_src - 1]
+        if ns_item_name_src is not None:
+            ws.cell(row=write_row, column=COL_NS_ITEM_NAME).value = src[ns_item_name_src - 1]
+        if ns_cust_id_src is not None:
+            ws.cell(row=write_row, column=COL_NS_CUST_ID).value = src[ns_cust_id_src - 1]
+        # Re-apply yellow to NS Customer ID if source was yellow
+        if ns_cust_id_src is not None and "Step 5" in workbook.sheetnames:
+            src_cell = workbook["Step 5"].cell(row=sheet_row, column=ns_cust_id_src)
+            if src_cell.fill and src_cell.fill.fill_type == "solid":
+                color = src_cell.fill.start_color.rgb if src_cell.fill.start_color else ""
+                if "FFFF00" in str(color).upper():
+                    ws.cell(row=write_row, column=COL_NS_CUST_ID).fill = DUP_YELLOW
 
         # Formats
         ws.cell(row=write_row, column=COL_UID).number_format    = '0'
@@ -487,13 +568,13 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
         ws.cell(row=write_row, column=COL_TOTAL).number_format  = '$#,##0.00'
         ws.cell(row=write_row, column=COL_DATE).number_format   = 'mm/dd/yyyy'
 
-        # Color green
-        for col in range(1, 14):
+        # Color green (extended to cover NS columns)
+        for col in range(1, TOTAL_COLS + 1):
             ws.cell(row=write_row, column=col).fill = FILL_GREEN
 
         write_row += 1
 
-    # --- Totals row: COMPUTED from written values ---
+    # Totals row (computed)
     last_data_row = write_row - 1
     totals_row = write_row + 1
 
@@ -510,12 +591,6 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
             sum_tax += t
         if isinstance(tot, (int, float)):
             sum_total += tot
-
-    def half_up(val):
-        if val >= 0:
-            return math.floor(val * 100 + 0.5) / 100
-        else:
-            return -math.floor(-val * 100 + 0.5) / 100
 
     ws.cell(row=totals_row, column=COL_AMOUNT).value = half_up(sum_amount)
     ws.cell(row=totals_row, column=COL_TAX).value    = half_up(sum_tax)

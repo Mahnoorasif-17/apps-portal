@@ -10,6 +10,7 @@ from .step4 import process_step_4
 from .step5 import process_step_5
 from .step6 import process_step_6
 from .utils import *
+from .netsuite_lookup import NetSuiteLookup
 
 
 def _flush(wb, path):
@@ -21,12 +22,19 @@ def _flush(wb, path):
     return load_workbook(path)
 
 
-def run_processing_pipeline(filepath, return_output_path=False):
+def run_processing_pipeline(filepath, return_output_path=False,
+                             item_master_path=None, customer_path=None):
     tmp_path = filepath + ".tmp.xlsx"
     wb = None
     try:
         start_total = time.time()
         print("--- Pipeline Start ---")
+
+        # Build NetSuite lookups once (used by Steps 4, 5, 6)
+        ns_lookup = NetSuiteLookup(
+            item_master_path=item_master_path,
+            customer_path=customer_path,
+        )
 
         t = time.time()
         wb = process_step_1(filepath)
@@ -43,7 +51,7 @@ def run_processing_pipeline(filepath, return_output_path=False):
         print(f"Step 3 took: {time.time() - t:.2f}s")
 
         t = time.time()
-        process_step_4(wb)
+        process_step_4(wb, ns_lookup=ns_lookup)
         wb = _flush(wb, tmp_path)
         print(f"Step 4 took: {time.time() - t:.2f}s")
 

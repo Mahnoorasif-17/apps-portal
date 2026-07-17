@@ -8,28 +8,97 @@ FILL_LIGHT_ORANGE = PatternFill(start_color="FFFFD580", end_color="FFFFD580", fi
 FILL_LIGHT_PURPLE = PatternFill(start_color="FFE5CCFF", end_color="FFE5CCFF", fill_type="solid")
 FILL_LIGHT_BLUE   = PatternFill(start_color="FFCCEEFF", end_color="FFCCEEFF", fill_type="solid")
 FILL_LIGHT_GREEN  = PatternFill(start_color="FFCCFFCC", end_color="FFCCFFCC", fill_type="solid")
+DUP_YELLOW        = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+
+# Extra NetSuite column headers appended after Amount
+NS_HEADERS = ["Item NetSuite ID", "Item NetSuite Name", "Customer NetSuite ID"]
 
 
-def process_step_4(workbook):
+def process_step_4(workbook, ns_lookup=None):
     step4 = copy_sheet(workbook, "Step 3", "Step 4")
     remove_empty_columns(step4)
     remove_columns_by_header(step4, ["SubTotal", "Tax", "Total", "User"])
     drop_rows_with_empty_item(step4)
     remove_footer_and_mech_rows(step4)
-    remove_mechanical_totals_row(step4)   # ← NEW: explicitly remove Mechanical Totals & Difference rows
+    remove_mechanical_totals_row(step4)
     clear_all_highlighting(step4)
+    add_uid_column(step4)
+    # Append NetSuite ID/Name columns FIRST, then re-apply header formatting so
+    # they get the gray header + filter dropdown like other columns.
+    append_netsuite_columns(step4, ns_lookup)
     format_header(step4, header_row=1)
     highlight_header_row(step4, header_row=1)
     autofit_columns(step4)
-    add_uid_column(step4)
-    distribute_items_to_sheets(step4, workbook)
+    distribute_items_to_sheets(step4, workbook, ns_lookup=ns_lookup)
+
+
+def append_netsuite_columns(sheet, ns_lookup):
+    """
+    Add 3 columns AFTER the Amount column:
+    - Item NetSuite ID
+    - Item NetSuite Name
+    - Customer NetSuite ID (highlighted YELLOW if customer has multiple IDs)
+    """
+    if ns_lookup is None:
+        _add_ns_headers_only(sheet)
+        return
+
+    try:
+        item_col     = get_column_index_by_header(sheet, "Item", 1)
+        customer_col = get_column_index_by_header(sheet, "Customer", 1)
+        amount_col   = get_column_index_by_header(sheet, "Amount", 1)
+    except Exception as e:
+        print(f"  [Step4] append_netsuite_columns skipped: {e}")
+        _add_ns_headers_only(sheet)
+        return
+
+    ns_item_id_col   = amount_col + 1
+    ns_item_name_col = amount_col + 2
+    ns_cust_id_col   = amount_col + 3
+
+    sheet.cell(row=1, column=ns_item_id_col).value   = NS_HEADERS[0]
+    sheet.cell(row=1, column=ns_item_name_col).value = NS_HEADERS[1]
+    sheet.cell(row=1, column=ns_cust_id_col).value   = NS_HEADERS[2]
+
+    max_row = sheet.max_row
+    filled_items = 0
+    filled_customers = 0
+    dup_count = 0
+    for row_idx in range(2, max_row + 1):
+        item_val     = sheet.cell(row=row_idx, column=item_col).value
+        customer_val = sheet.cell(row=row_idx, column=customer_col).value
+
+        ns_id, ns_name = ns_lookup.lookup_item(item_val)
+        cust_ns_id = ns_lookup.lookup_customer(customer_val)
+
+        if ns_id is not None:
+            sheet.cell(row=row_idx, column=ns_item_id_col).value = ns_id
+            filled_items += 1
+        if ns_name is not None:
+            sheet.cell(row=row_idx, column=ns_item_name_col).value = ns_name
+        if cust_ns_id is not None:
+            sheet.cell(row=row_idx, column=ns_cust_id_col).value = cust_ns_id
+            filled_customers += 1
+
+            # If this customer has 2+ NS IDs, highlight the Customer NetSuite ID cell yellow
+            if ns_lookup.has_multiple_ids(customer_val):
+                sheet.cell(row=row_idx, column=ns_cust_id_col).fill = DUP_YELLOW
+                dup_count += 1
+
+    print(f"  [Step4] NS columns: {filled_items} items matched, {filled_customers} customers matched, {dup_count} yellow-flagged")
+
+def _add_ns_headers_only(sheet):
+    """Add just the 3 empty NS columns (used when ns_lookup is None)."""
+    try:
+        amount_col = get_column_index_by_header(sheet, "Amount", 1)
+    except Exception:
+        return
+    sheet.cell(row=1, column=amount_col + 1).value = NS_HEADERS[0]
+    sheet.cell(row=1, column=amount_col + 2).value = NS_HEADERS[1]
+    sheet.cell(row=1, column=amount_col + 3).value = NS_HEADERS[2]
 
 
 def remove_mechanical_totals_row(sheet):
-    """
-    Explicitly find and remove any row containing 'Mechanical Totals' or 'Difference'.
-    These rows come from Step 2 and should not appear in Step 4 onwards.
-    """
     rows_to_delete = []
     for row_cells in sheet.iter_rows(min_row=1, max_row=sheet.max_row, max_col=sheet.max_column):
         for cell in row_cells:
@@ -39,8 +108,6 @@ def remove_mechanical_totals_row(sheet):
                 if "mechanical total" in vl or vl == "difference":
                     rows_to_delete.append(row_cells[0].row)
                     break
-
-    # Delete bottom-up to avoid index shifting
     for row_num in sorted(rows_to_delete, reverse=True):
         sheet.delete_rows(row_num, 1)
 
@@ -74,7 +141,7 @@ def add_uid_column(sheet):
             counter += 1
 
 
-def distribute_items_to_sheets(source, workbook):
+def distribute_items_to_sheets(source, workbook, ns_lookup=None):
     mapping = [
         ("DHL",   "dhl",   FILL_LIGHT_ORANGE, ["dhl drop off"]),
         ("USPS",  "usps",  FILL_LIGHT_PURPLE, ["void"]),
@@ -97,14 +164,13 @@ def distribute_items_to_sheets(source, workbook):
         src_data.append([c.value for c in row])
         src_formats.append([c.number_format for c in row])
 
-    # RegID -> indices map for fast declared-value fallback
     regid_to_indices = {}
     for idx in range(1, len(src_data)):
         rid = src_data[idx][regid_col - 1]
         if rid is not None:
             regid_to_indices.setdefault(rid, []).append(idx)
 
-    # Create service sheets with headers
+    # Create service sheets — copy ALL headers from source (includes NS columns)
     service_sheets = {}
     for sheet_name, keyword, fill, excludes in mapping:
         target = workbook.create_sheet(sheet_name)
@@ -152,7 +218,6 @@ def distribute_items_to_sheets(source, workbook):
             i += 1
             continue
 
-        # Service row check
         matched_service = None
         for sheet_name, keyword, fill, excludes in mapping:
             if keyword in item_lower and not any(ex in item_lower for ex in excludes):
@@ -166,18 +231,21 @@ def distribute_items_to_sheets(source, workbook):
         sheet_name, keyword, fill, excludes = matched_service
         service_sheets[sheet_name]["rows_buffer"].append((row_data, row_fmts))
 
-        # Existing discount/coupon
+        # Existing discount/coupon (keep grabbing consecutive ones same RegID)
         has_existing_discount = False
-        if next_idx < len(src_data):
-            next_data = src_data[next_idx]
-            next_fmts = src_formats[next_idx]
-            next_item = str(next_data[item_col - 1] or "").lower()
-            next_regid = next_data[regid_col - 1]
-            if (next_regid == regid and
-                ("discount" in next_item or "coupon" in next_item) and
-                "void" not in next_item):
-                service_sheets[sheet_name]["rows_buffer"].append((next_data, next_fmts))
-                has_existing_discount = True
+        scan_idx = next_idx
+        while scan_idx < len(src_data):
+            scan_data = src_data[scan_idx]
+            scan_fmts = src_formats[scan_idx]
+            scan_item = str(scan_data[item_col - 1] or "").lower()
+            scan_regid = scan_data[regid_col - 1]
+            if scan_regid != regid:
+                break
+            if not (("discount" in scan_item or "coupon" in scan_item) and "void" not in scan_item):
+                break
+            service_sheets[sheet_name]["rows_buffer"].append((scan_data, scan_fmts))
+            has_existing_discount = True
+            scan_idx += 1
 
         # Empire 50% discount
         if customer.strip().lower() == "empire merchants chelsea" and not has_existing_discount:
@@ -191,6 +259,19 @@ def distribute_items_to_sheets(source, workbook):
 
         i += 1
 
+    # Write buffers to service sheets (rows include NS columns automatically since we copy all)
+    # Find NS Customer ID column position in the source (row_data uses these indices)
+    ns_cust_id_idx = None  # 0-based index into row_data
+    header_row_data = src_data[0]
+    for idx, val in enumerate(header_row_data):
+        vl = str(val or "").strip().lower()
+        if vl == "customer netsuite id":
+            ns_cust_id_idx = idx
+            break
+
+    # Also need the source Customer column so we can re-check duplicates
+    customer_idx_0based = customer_col - 1  # 0-based
+
     # Write buffers to service sheets
     for sheet_name, info in service_sheets.items():
         target = info["sheet"]
@@ -203,17 +284,24 @@ def distribute_items_to_sheets(source, workbook):
                 cell.fill = fill
                 if fmt:
                     cell.number_format = fmt
+
+            # After the row is colored, apply yellow to NS Customer ID cell if this customer has 2+ IDs
+            if ns_lookup is not None and ns_cust_id_idx is not None:
+                cust_val = row_data[customer_idx_0based]
+                if ns_lookup.has_multiple_ids(cust_val):
+                    target.cell(row=write_row, column=ns_cust_id_idx + 1).fill = DUP_YELLOW
+
             write_row += 1
         format_header(target, header_row=1)
         freeze_top_and_filter(target)
         highlight_header_row(target, header_row=1)
         autofit_columns(target)
 
-    build_3pl_sheet(workbook, service_sheets)
-    build_account_sheets(source, workbook, mapping)
+    build_3pl_sheet(workbook, service_sheets, ns_lookup=ns_lookup)
+    build_account_sheets(source, workbook, mapping, ns_lookup=ns_lookup)
 
 
-def build_3pl_sheet(workbook, service_sheets):
+def build_3pl_sheet(workbook, service_sheets, ns_lookup=None):
     SERVICE_ORDER = ["DHL", "USPS", "FedEx", "UPS"]
     EXCLUDED_TENDER = "account"
     EXCLUDED_ITEM_KEYWORDS = ["void"]
@@ -231,7 +319,7 @@ def build_3pl_sheet(workbook, service_sheets):
         return
 
     header_values = []
-    tender_col = item_col_3pl = uid_col = None
+    tender_col = item_col_3pl = uid_col = customer_col_3pl = ns_cust_id_col_3pl = None
     for col in range(1, first_sheet.max_column + 1):
         val = first_sheet.cell(row=1, column=col).value
         header_values.append(val)
@@ -242,6 +330,10 @@ def build_3pl_sheet(workbook, service_sheets):
             item_col_3pl = col
         elif hv == "uid":
             uid_col = col
+        elif hv == "customer":
+            customer_col_3pl = col
+        elif hv == "customer netsuite id":
+            ns_cust_id_col_3pl = col
 
     for col_idx, val in enumerate(header_values, start=1):
         sheet_3pl.cell(row=1, column=col_idx).value = val
@@ -270,6 +362,13 @@ def build_3pl_sheet(workbook, service_sheets):
                 cell.fill = fill
                 if fmt:
                     cell.number_format = fmt
+
+            # Yellow flag on Customer NS ID cell if duplicates
+            if ns_lookup is not None and ns_cust_id_col_3pl is not None and customer_col_3pl is not None:
+                cust_val = row_data[customer_col_3pl - 1]
+                if ns_lookup.has_multiple_ids(cust_val):
+                    sheet_3pl.cell(row=write_row, column=ns_cust_id_col_3pl).fill = DUP_YELLOW
+
             write_row += 1
 
     format_header(sheet_3pl, header_row=1)
@@ -278,7 +377,7 @@ def build_3pl_sheet(workbook, service_sheets):
     autofit_columns(sheet_3pl)
 
 
-def build_account_sheets(source, workbook, mapping):
+def build_account_sheets(source, workbook, mapping, ns_lookup=None):
     ACCOUNT_CUSTOMERS = [
         ("E-Scribers", ["e-scriber", "escriber"]),
         ("Empire",     ["empire"]),
@@ -292,6 +391,13 @@ def build_account_sheets(source, workbook, mapping):
     amount_col   = get_column_index_by_header(source, "Amount", 1)
     regid_col    = get_column_index_by_header(source, "RegID", 1)
     max_col      = source.max_column
+
+    # NS Customer ID column position (may not exist if ns_lookup was None)
+    ns_cust_id_col_src = None
+    try:
+        ns_cust_id_col_src = get_column_index_by_header(source, "Customer NetSuite ID", 1)
+    except Exception:
+        pass
 
     src_data = []
     src_formats = []
@@ -351,6 +457,13 @@ def build_account_sheets(source, workbook, mapping):
                 if fmt:
                     tgt_cell.number_format = fmt
                 tgt_cell.fill = row_fill
+
+            # Yellow flag on Customer NS ID cell if duplicates
+            if ns_lookup is not None and ns_cust_id_col_src is not None:
+                cust_val = row_data[customer_col - 1]
+                if ns_lookup.has_multiple_ids(cust_val):
+                    ws.cell(row=write_row, column=ns_cust_id_col_src).fill = DUP_YELLOW
+
             write_row += 1
 
             if is_empire:
@@ -381,13 +494,19 @@ def build_account_sheets(source, workbook, mapping):
                         ws.cell(row=write_row, column=item_col).value = "50% discount"
                         if isinstance(amount_val, (int, float)):
                             ws.cell(row=write_row, column=amount_col).value = -abs(amount_val) / 2
+
+                        # Yellow flag on Customer NS ID cell for the auto-generated 50% row too
+                        if ns_lookup is not None and ns_cust_id_col_src is not None:
+                            cust_val = row_data[customer_col - 1]
+                            if ns_lookup.has_multiple_ids(cust_val):
+                                ws.cell(row=write_row, column=ns_cust_id_col_src).fill = DUP_YELLOW
+
                         write_row += 1
 
             i += 1
 
-        # Net total
-        total_row = write_row + 1
         # Net total — sum directly from written rows (includes auto-generated 50% discounts)
+        total_row = write_row + 1
         net_total = 0.0
         for r in range(2, write_row):
             val = ws.cell(row=r, column=amount_col).value
