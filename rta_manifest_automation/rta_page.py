@@ -115,7 +115,7 @@ def rta_page():
     st.markdown(
         '<div class="section-title">👤 Customer List (Silk File)'
         '<span class="optional-badge">OPTIONAL</span></div>'
-        '<div class="section-desc">Adds <b>Customer NetSuite ID</b> column. Rows with multiple matching IDs are highlighted <b style="background:#fff59d;padding:1px 6px;border-radius:3px;">yellow</b>.</div>',
+        '<div class="section-desc">Adds <b>Customer NetSuite ID</b> column. Customers associated with multiple IDs are highlighted <b style="background:#fff59d;padding:1px 6px;border-radius:3px;">yellow</b>.</div>',
         unsafe_allow_html=True,
     )
     customer_file = st.file_uploader(

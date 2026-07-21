@@ -1,5 +1,6 @@
 import re
 import time
+import datetime
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill
 
@@ -21,6 +22,17 @@ def parse_amount(val):
         return float(val)
     except:
         return 0.0
+
+
+def clean_date(val):
+    if val is None:
+        return None
+    if isinstance(val, (datetime.datetime, datetime.date)):
+        return val  # real date/datetime object, formatting handles display
+    s = str(val).strip()
+    # strip trailing time like " 0:00:00" or " 00:00:00"
+    s = re.sub(r"\s+\d{1,2}:\d{2}(:\d{2})?$", "", s)
+    return s
 
 
 def process_step_6(workbook):
@@ -148,6 +160,8 @@ def process_step_6(workbook):
                     else:
                         row_data.append(None)
 
+                row_data[2] = clean_date(row_data[2])
+
                 row_data[7] = amount
                 row_data[8] = 0.0
                 row_data[9] = amount
@@ -181,6 +195,8 @@ def process_step_6(workbook):
                 row_data.append(row_vals[c - 1])
             else:
                 row_data.append(None)
+
+        row_data[2] = clean_date(row_data[2])
 
         row_data[7] = amount
         row_data[8] = tax
@@ -217,6 +233,9 @@ def process_step_6(workbook):
             cell = step6.cell(row=row, column=col)
             if isinstance(cell.value, (int, float)):
                 cell.number_format = '$#,##0.00'
+        date_cell = step6.cell(row=row, column=3)
+        if isinstance(date_cell.value, (datetime.datetime, datetime.date)):
+            date_cell.number_format = 'mm/dd/yyyy'
 
     step6.append([])
     step6.append([
@@ -271,6 +290,9 @@ def _build_retail_tab(workbook, step6, headers, processed_rows,
             cell = retail.cell(row=row, column=col)
             if isinstance(cell.value, (int, float)):
                 cell.number_format = '$#,##0.00'
+        date_cell = retail.cell(row=row, column=3)
+        if isinstance(date_cell.value, (datetime.datetime, datetime.date)):
+            date_cell.number_format = 'mm/dd/yyyy'
 
     retail.append([])
     retail.append([
