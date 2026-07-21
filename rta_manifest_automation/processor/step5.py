@@ -1,6 +1,7 @@
 import time
 import re
 import math
+import datetime
 from copy import copy
 from collections import defaultdict
 from openpyxl.styles import PatternFill, Font, Alignment
@@ -12,6 +13,17 @@ FILL_BLUE   = PatternFill(start_color="FF0099FF", end_color="FF0099FF", fill_typ
 FILL_GREEN  = PatternFill(start_color="FF00CC00", end_color="FF00CC00", fill_type="solid")
 FILL_GRAY   = PatternFill(start_color="FF808080", end_color="FF808080", fill_type="solid")
 DUP_YELLOW = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+
+
+def clean_date(val):
+    if val is None:
+        return None
+    if isinstance(val, (datetime.datetime, datetime.date)):
+        return val  # real date/datetime object, formatting handles display
+    s = str(val).strip()
+    # strip trailing time like " 0:00:00" or " 00:00:00"
+    s = re.sub(r"\s+\d{1,2}:\d{2}(:\d{2})?$", "", s)
+    return s
 
 
 def process_step_5(workbook):
@@ -27,6 +39,7 @@ def process_step_5(workbook):
     uid_col      = get_column_index_by_header(step5, "UID", 1)
     amount_col   = get_column_index_by_header(step5, "Amount", 1)
     regid_col    = get_column_index_by_header(step5, "RegID", 1)
+    date_col     = get_column_index_by_header(step5, "Date", 1)
     max_col      = step5.max_column
 
     # --- Load entire sheet into memory ONCE ---
@@ -231,7 +244,8 @@ def process_step_5(workbook):
 
     # --- Build downstream sheets ---
     t = time.time()
-    _copy_rows_to_tab_fast(rows_data, workbook, "Mailbox", mailbox_rows, max_col, exclude_col=helper_col)
+    _copy_rows_to_tab_fast(rows_data, workbook, "Mailbox", mailbox_rows, max_col,
+                            exclude_col=helper_col, date_col=date_col)
     print(f"  [Step5] Mailbox tab: {time.time()-t:.2f}s")
 
     t = time.time()
@@ -257,7 +271,8 @@ def process_step_5(workbook):
     print(f"  [Step5] TOTAL: {time.time()-t0:.2f}s")
 
 
-def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, max_col, exclude_col=None):
+def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, max_col,
+                            exclude_col=None, date_col=None):
     if tab_name in workbook.sheetnames:
         del workbook[tab_name]
     ws = workbook.create_sheet(tab_name)
@@ -273,7 +288,14 @@ def _copy_rows_to_tab_fast(rows_data, workbook, tab_name, sheet_rows_to_copy, ma
         src = rows_data[sheet_row - 1]
         for out_col, src_col in enumerate(cols_to_copy, start=1):
             cell = ws.cell(row=write_row, column=out_col)
-            cell.value = src[src_col - 1]
+            val = src[src_col - 1]
+            if date_col is not None and src_col == date_col:
+                val = clean_date(val)
+                cell.value = val
+                if isinstance(val, (datetime.datetime, datetime.date)):
+                    cell.number_format = 'mm/dd/yyyy'
+            else:
+                cell.value = val
             cell.fill = FILL_GREEN
         write_row += 1
 
@@ -349,6 +371,7 @@ def build_void_discount_coupons_fast(rows_data, workbook, purple_rows,
                 if isinstance(v, (int, float)) and v < 0:
                     cell.font = Font(color="FF0000")
             elif out_col == COL_DATE:
+                cell.value = clean_date(src[src_col - 1])
                 cell.number_format = 'mm/dd/yyyy'
 
         # Write NS columns
@@ -517,7 +540,7 @@ def build_mailbox_working_fast(rows_data, workbook, mailbox_rows,
         # Core fields
         ws.cell(row=write_row, column=COL_UID).value      = src[uid_col - 1]
         ws.cell(row=write_row, column=COL_REGID).value    = src[regid_col - 1]
-        ws.cell(row=write_row, column=COL_DATE).value     = src[date_col - 1]
+        ws.cell(row=write_row, column=COL_DATE).value     = clean_date(src[date_col - 1])
         ws.cell(row=write_row, column=COL_TIME).value     = src[time_col - 1]
         ws.cell(row=write_row, column=COL_ITEM).value     = item_val
         ws.cell(row=write_row, column=COL_TENDER).value   = src[tender_col - 1]
