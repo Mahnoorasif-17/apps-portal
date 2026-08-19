@@ -38,9 +38,9 @@ from broker_commission_automation.engine.transform import run_transform
 
 # --- MAIN APP FUNCTION ---
 def show_broker_commission():
-    # 1. Auth Gate Check
-    if not check_password():
-        st.stop()
+        # # 1. Auth Gate Check
+        # if not check_password():
+        #     st.stop()
 
     # 2. File Paths relative to this subfolder
     BASE_DIR = os.path.dirname(__file__)
