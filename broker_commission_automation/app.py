@@ -16,24 +16,24 @@ from broker_commission_automation.engine.transform import run_transform
 # Handled globally by the main portal script.
 
 
-def check_password() -> bool:
-    if st.session_state.get("authed"):
-        return True
+# def check_password() -> bool:
+#     if st.session_state.get("authed"):
+#         return True
     
-    # Safely get secret password or fallback to "changeme"
-    # try:
-    #     expected_pw = st.secrets.get("APP_PASSWORD", "changeme")
-    # except Exception:
-    #     expected_pw = "asdfghjkl0987654321"
+#     # Safely get secret password or fallback to "changeme"
+#     # try:
+#     #     expected_pw = st.secrets.get("APP_PASSWORD", "changeme")
+#     # except Exception:
+#     #     expected_pw = "asdfghjkl0987654321"
 
-    pw = st.text_input("Password", type="password")
-    if pw:
-        if pw == expected_pw:
-            st.session_state["authed"] = True
-            st.rerun()
-        else:
-            st.error("Wrong password")
-    return False
+#     pw = st.text_input("Password", type="password")
+#     if pw:
+#         if pw == expected_pw:
+#             st.session_state["authed"] = True
+#             st.rerun()
+#         else:
+#             st.error("Wrong password")
+#     return False
 
 
 # --- MAIN APP FUNCTION ---
