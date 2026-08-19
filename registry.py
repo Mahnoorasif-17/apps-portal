@@ -5,6 +5,7 @@ from ONHO_Bank_Recognition.app import show_bank_recon
 from rta_manifest_automation.app import show_rta_manifest
 from xmltoexcel.splittingxml_mon_year_newest import show_xml_converter
 from ONHO_customer_data_formatter.app import show_customer_formatter
+from broker_commission_automation.app import show_broker_commission
 
 # --- CLIENT logos ---
 CLIENTS = [
@@ -63,6 +64,13 @@ APPS = {
         "function": show_customer_formatter, 
         "client": "ONHO", 
         "logo": "logos/customer_formatter_logo.png"
-    }
+    },
+    "broker_commission": {
+    "title": "Broker Commission", 
+    "caption": "Broker commission automation tool.", 
+    "function": show_broker_commission, 
+    "client": "REDH", 
+    "logo": "logos/broker-commission.jpg" 
+}
 }
 
