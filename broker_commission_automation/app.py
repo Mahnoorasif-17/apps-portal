@@ -12,29 +12,6 @@ from broker_commission_automation.engine.lookups import load_lookups
 from broker_commission_automation.engine.matching import AliasStore, NameMatcher
 from broker_commission_automation.engine.transform import run_transform
 
-# --- REMOVED st.set_page_config() ---
-# Handled globally by the main portal script.
-
-
-# def check_password() -> bool:
-#     if st.session_state.get("authed"):
-#         return True
-    
-#     # Safely get secret password or fallback to "changeme"
-#     # try:
-#     #     expected_pw = st.secrets.get("APP_PASSWORD", "changeme")
-#     # except Exception:
-#     #     expected_pw = "asdfghjkl0987654321"
-
-#     pw = st.text_input("Password", type="password")
-#     if pw:
-#         if pw == expected_pw:
-#             st.session_state["authed"] = True
-#             st.rerun()
-#         else:
-#             st.error("Wrong password")
-#     return False
-
 
 # --- MAIN APP FUNCTION ---
 def show_broker_commission():
