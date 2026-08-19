@@ -21,10 +21,10 @@ def check_password() -> bool:
         return True
     
     # Safely get secret password or fallback to "changeme"
-    try:
-        expected_pw = st.secrets.get("APP_PASSWORD", "changeme")
-    except Exception:
-        expected_pw = "asdfghjkl0987654321"
+    # try:
+    #     expected_pw = st.secrets.get("APP_PASSWORD", "changeme")
+    # except Exception:
+    #     expected_pw = "asdfghjkl0987654321"
 
     pw = st.text_input("Password", type="password")
     if pw:
