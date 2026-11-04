@@ -6,6 +6,7 @@ from openpyxl.styles import Font, PatternFill
 
 
 DUP_YELLOW = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
+VOID_PURPLE = PatternFill(start_color="B44CB5", end_color="B44CB5", fill_type="solid")  # NEW (same purple as Step 5)
 
 
 def clean_text(val):
@@ -55,6 +56,7 @@ def process_step_6(workbook):
 
     item_col   = 5
     amount_col = 8
+    regid_col  = 2   # NEW
 
     TAX_RATE = 0.08875
 
@@ -122,10 +124,42 @@ def process_step_6(workbook):
 
     print(f"  [Step6] loaded {len(rows_values)} rows in {time.time()-t:.2f}s")
 
+    # NEW: coupon/discount rows that cancel another row with the same RegID and amount -> "Extra" sheet
+    extra_idx = set()
+    coupons_by_regid = {}
+    items_by_regid = {}
+    for i in range(1, len(rows_values)):
+        if not rows_no_fill[i]:
+            continue
+        rv = rows_values[i]
+        rid = rv[regid_col - 1] if len(rv) >= regid_col else None
+        if rid in (None, ""):
+            continue
+        ic = clean_text(rv[item_col - 1] if len(rv) >= item_col else None)
+        amt = parse_amount(rv[amount_col - 1] if len(rv) >= amount_col else None)
+        if any(k in ic for k in COUPON_DISCOUNT_KEYWORDS):
+            coupons_by_regid.setdefault(rid, []).append((i, amt))
+        elif ic and amt != 0 and "petty" not in ic and "mechanical total" not in ic:
+            items_by_regid.setdefault(rid, []).append((i, amt))
+    for rid, coupon_list in coupons_by_regid.items():
+        available = list(items_by_regid.get(rid, []))
+        for c_idx, c_amt in coupon_list:
+            if c_amt == 0:
+                continue
+            for k, (i_idx, i_amt) in enumerate(available):
+                if round(c_amt + i_amt, 2) == 0:  # same amount, coupon is the negative side
+                    extra_idx.update((c_idx, i_idx))
+                    del available[k]
+                    break
+
     processed_rows = []
     total_amount = 0.0
     total_tax    = 0.0
     total_total  = 0.0
+
+    # NEW: rows going to the Extra sheet and Petty rows going to the Void sheet
+    extra_rows = []
+    petty_rows = []
 
     last_item_was_retail = False
 
@@ -151,6 +185,11 @@ def process_step_6(workbook):
         ns_cust_id   = row_vals[ns_cust_id_src - 1]   if ns_cust_id_src   is not None and len(row_vals) >= ns_cust_id_src   else None
         cust_is_yellow = rows_ns_cust_yellow[r_idx]
 
+        # NEW: Petty -> Void sheet (not part of Step 6 / Retail)
+        if "petty" in item_clean:
+            petty_rows.append((row_vals, ns_item_id, ns_item_name, ns_cust_id, cust_is_yellow))
+            continue
+
         if is_coupon_discount:
             if last_item_was_retail:
                 row_data = []
@@ -168,6 +207,10 @@ def process_step_6(workbook):
 
                 # Append taxable_flag + NS values
                 full_row = row_data + ["n", ns_item_id, ns_item_name, ns_cust_id]
+
+                if r_idx in extra_idx:  # NEW: also copy to Extra (row stays in Step 6 / Retail)
+                    extra_rows.append((item_clean, full_row, cust_is_yellow))
+
                 processed_rows.append((item_clean, full_row, cust_is_yellow))
 
                 total_amount += amount
@@ -185,6 +228,9 @@ def process_step_6(workbook):
             continue
 
         is_taxable   = any(k in item_clean for k in TAXABLE_KEYWORDS)
+        # NEW: Rent / Rental in Item -> not taxable (n)
+        if re.search(r"\brent", item_clean):
+            is_taxable = False
         tax          = round(amount * TAX_RATE, 2) if is_taxable else 0.0
         taxable_flag = "y" if is_taxable else "n"
         total        = round(amount + tax, 2)
@@ -203,6 +249,10 @@ def process_step_6(workbook):
         row_data[9] = total
 
         full_row = row_data + [taxable_flag, ns_item_id, ns_item_name, ns_cust_id]
+
+        if r_idx in extra_idx:  # NEW: also copy to Extra (row stays in Step 6 / Retail)
+            extra_rows.append((item_clean, full_row, cust_is_yellow))
+
         processed_rows.append((item_clean, full_row, cust_is_yellow))
 
         total_amount += amount
@@ -212,6 +262,7 @@ def process_step_6(workbook):
         last_item_was_retail = True
 
     print(f"  [Step6] processed {len(processed_rows)} rows in {time.time()-t:.2f}s")
+    print(f"  [Step6] UPDATED VERSION -> extra rows: {len(extra_rows)}, petty rows: {len(petty_rows)}")  # NEW (diagnostic)
 
     processed_rows.sort(key=lambda x: x[0])
 
@@ -260,6 +311,10 @@ def process_step_6(workbook):
 
     _build_retail_tab(workbook, step6, headers, processed_rows,
                       total_amount, total_tax, total_total)
+
+    # NEW (Extra is built last so it sits at the very end, after Retail)
+    _move_petty_to_void(workbook, petty_rows)
+    _build_extra_tab(workbook, headers, extra_rows)
 
     print(f"  [Step6] TOTAL: {time.time()-t0:.2f}s")
     return step6
@@ -314,3 +369,91 @@ def _build_retail_tab(workbook, step6, headers, processed_rows,
 
     retail.freeze_panes    = "A2"
     retail.auto_filter.ref = f"A1:N{retail.max_row}"
+
+
+# NEW: "Extra" sheet (same 14 columns as Step 6) for coupon/discount + item pairs with same RegID and amount
+def _build_extra_tab(workbook, headers, extra_rows):
+    TAB_NAME = "Extra"
+
+    if TAB_NAME in workbook.sheetnames:
+        del workbook[TAB_NAME]
+
+    ws = workbook.create_sheet(TAB_NAME)  # created last -> lands after Retail
+    ws.append(headers)
+
+    COL_AMOUNT_OUT = 8
+    COL_TAX_OUT    = 9
+    COL_TOTAL_OUT  = 10
+    COL_NS_CUST_ID_OUT = 14
+
+    for _, full_row, cust_is_yellow in extra_rows:
+        ws.append(full_row)
+        if cust_is_yellow:
+            ws.cell(row=ws.max_row, column=COL_NS_CUST_ID_OUT).fill = DUP_YELLOW
+
+    for row in range(2, ws.max_row + 1):
+        for col in [COL_AMOUNT_OUT, COL_TAX_OUT, COL_TOTAL_OUT]:
+            cell = ws.cell(row=row, column=col)
+            if isinstance(cell.value, (int, float)):
+                cell.number_format = '$#,##0.00'
+        date_cell = ws.cell(row=row, column=3)
+        if isinstance(date_cell.value, (datetime.datetime, datetime.date)):
+            date_cell.number_format = 'mm/dd/yyyy'
+
+    for col in range(1, 15):
+        ws.column_dimensions[get_column_letter(col)].width = 20
+
+    ws.freeze_panes    = "A2"
+    ws.auto_filter.ref = f"A1:N{ws.max_row}"
+
+
+# NEW: appends Petty rows to the Void sheet built in Step 5 (same 11-column layout, purple)
+def _move_petty_to_void(workbook, petty_rows):
+    if not petty_rows:
+        return
+
+    TAB_NAME = "Void-Discount-Coupons"
+    void_headers = ["UID", "RegID", "Date", "Time", "Item", "Tender", "Customer", "Amount",
+                    "Item NetSuite ID", "Item NetSuite Name", "Customer NetSuite ID"]
+
+    if TAB_NAME in workbook.sheetnames:
+        ws = workbook[TAB_NAME]
+    else:
+        ws = workbook.create_sheet(TAB_NAME)
+        for col_idx, h in enumerate(void_headers, start=1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.value = h
+            cell.fill = VOID_PURPLE
+            cell.font = Font(bold=True, color="FFFFFF")
+        ws.freeze_panes = "A2"
+
+    # Skip UIDs already on the sheet so re-running Step 6 doesn't duplicate rows
+    existing_uids = set()
+    for (v,) in ws.iter_rows(min_row=2, min_col=1, max_col=1, values_only=True):
+        if v:
+            existing_uids.add(v)
+
+    for row_vals, ns_item_id, ns_item_name, ns_cust_id, cust_is_yellow in petty_rows:
+        def g(i):
+            return row_vals[i] if len(row_vals) > i else None
+
+        uid = g(0)
+        if uid and uid in existing_uids:
+            continue
+
+        r = ws.max_row + 1
+        values = [uid, g(1), clean_date(g(2)), g(3), g(4), g(5), g(6), g(7),
+                  ns_item_id, ns_item_name, ns_cust_id]
+        for c, v in enumerate(values, start=1):
+            cell = ws.cell(row=r, column=c)
+            cell.value = v
+            cell.fill = VOID_PURPLE
+
+        ws.cell(row=r, column=1).number_format = '0'
+        ws.cell(row=r, column=3).number_format = 'mm/dd/yyyy'
+        amt_cell = ws.cell(row=r, column=8)
+        amt_cell.number_format = '$#,##0.00'
+        if isinstance(g(7), (int, float)) and g(7) < 0:
+            amt_cell.font = Font(color="FF0000")
+        if cust_is_yellow:
+            ws.cell(row=r, column=11).fill = DUP_YELLOW
