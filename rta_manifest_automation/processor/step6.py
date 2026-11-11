@@ -77,6 +77,11 @@ def process_step_6(workbook):
 
     COUPON_DISCOUNT_KEYWORDS = ["coupon", "discount"]
 
+    # NEW: account customers (same keywords as Step 4 build_account_sheets); their Cash rows are copied to Extra
+    ACCOUNT_CUSTOMER_KEYWORDS = ["e-scriber", "escriber", "empire", "feshaire", "fashaire"]
+    tender_col   = 6
+    customer_col = 7
+
     def is_no_fill_from_cell(cell):
         fill = cell.fill
         if fill is None:
@@ -262,6 +267,38 @@ def process_step_6(workbook):
         last_item_was_retail = True
 
     print(f"  [Step6] processed {len(processed_rows)} rows in {time.time()-t:.2f}s")
+
+    # NEW: Cash rows of E-Scribers / Empire / Feshaire -> Extra (Tax / Total / Taxable left blank)
+    already_in_extra = {fr[0] for _, fr, _ in extra_rows if fr[0]}
+    for r_idx in range(1, len(rows_values)):
+        row_vals = rows_values[r_idx]
+        if len(row_vals) < max(amount_col, customer_col, tender_col):
+            continue
+
+        if str(row_vals[tender_col - 1] or "").strip().lower() != "cash":
+            continue
+        customer_val = str(row_vals[customer_col - 1] or "").lower()
+        if not any(kw in customer_val for kw in ACCOUNT_CUSTOMER_KEYWORDS):
+            continue
+
+        item_raw = row_vals[item_col - 1]
+        amount   = parse_amount(row_vals[amount_col - 1])
+        if str(item_raw or "").strip() == "" and amount == 0:
+            continue
+        if "void" in str(item_raw or "").lower():
+            continue
+        if row_vals[0] and row_vals[0] in already_in_extra:
+            continue
+
+        ns_item_id   = row_vals[ns_item_id_src - 1]   if ns_item_id_src   is not None and len(row_vals) >= ns_item_id_src   else None
+        ns_item_name = row_vals[ns_item_name_src - 1] if ns_item_name_src is not None and len(row_vals) >= ns_item_name_src else None
+        ns_cust_id   = row_vals[ns_cust_id_src - 1]   if ns_cust_id_src   is not None and len(row_vals) >= ns_cust_id_src   else None
+
+        full_row = [row_vals[0], row_vals[1], clean_date(row_vals[2]), row_vals[3], item_raw,
+                    row_vals[5], row_vals[6], amount, None, None, None,
+                    ns_item_id, ns_item_name, ns_cust_id]
+        extra_rows.append((clean_text(item_raw), full_row, rows_ns_cust_yellow[r_idx]))
+
     print(f"  [Step6] UPDATED VERSION -> extra rows: {len(extra_rows)}, petty rows: {len(petty_rows)}")  # NEW (diagnostic)
 
     processed_rows.sort(key=lambda x: x[0])
