@@ -9,11 +9,14 @@ def show_bank_recon():
 
     if st.button("Run Reconciliation"):
         if batch_file and rta_file:
-            # Your original logic call
-            output_file = run_reconciliation(batch_file, rta_file)
-            st.success("Reconciliation complete!")
+            try:
+                # Your original logic call
+                output_file = run_reconciliation(batch_file, rta_file)
+                st.success("Reconciliation complete!")
 
-            with open(output_file, "rb") as f:
-                st.download_button("Download Excel", f, file_name="Reconciliation_Output.xlsx")
+                with open(output_file, "rb") as f:
+                    st.download_button("Download Excel", f, file_name="Reconciliation_Output.xlsx")
+            except ValueError as e:
+                st.error(str(e))
         else:
             st.warning("Please upload both files.")

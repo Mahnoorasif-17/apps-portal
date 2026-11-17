@@ -73,6 +73,17 @@ def run_reconciliation(batch_file, rta_file, output_file=None):
     batch_df = clean_object_columns(batch_df)
     rta_df   = clean_object_columns(rta_df)
 
+    # ---- Wrong-uploader check (added only) ----
+    _b_cols = {str(c).lower() for c in batch_df.columns}
+    _r_cols = {str(c).lower() for c in rta_df.columns}
+    if "card brand" not in _b_cols:
+        raise ValueError("Wrong file in the 1881 uploader: no 'Card brand' column. Upload the 1881 Batch file here.")
+    if "tender" not in _r_cols:
+        raise ValueError("Wrong file in the RTA uploader: no 'Tender' column. Upload the RTA file here.")
+
+    batch_df = clean_object_columns(batch_df)
+    rta_df   = clean_object_columns(rta_df)
+
     # =========================
     # Parse numeric amounts (BATCH made robust like RTA)
     # =========================
